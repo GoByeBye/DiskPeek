@@ -1,4 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>DiskPeek.Tests</AssemblyName></PropertyGroup>
-  <ItemGroup><ProjectReference Include="../../src/DiskPeek.Core/DiskPeek.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/DiskPeek.Core/DiskPeek.Core.csproj" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
+    <!-- Exercise the production update policy without starting WPF or touching user preferences. -->
+    <Compile Include="../../src/DiskPeek.App/UpdateService.cs" Link="App/UpdateService.cs" />
+    <Compile Include="../../src/DiskPeek.App/UserSettings.cs" Link="App/UserSettings.cs" />
+  </ItemGroup>
 </Project>

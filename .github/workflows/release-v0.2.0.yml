@@ -1,0 +1,49 @@
+name: Request DiskPeek v0.2.0 installer release
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/release-v0.2.0.yml]
+
+permissions: {}
+
+concurrency:
+  group: request-release-v0.2.0
+  cancel-in-progress: false
+
+jobs:
+  request:
+    if: github.repository == 'GoByeBye/DiskPeek' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: GoByeBye/DiskPeek
+    steps:
+      # The standard pipeline validates the tag, source, packages, and publication.
+      # This request never checks out or executes repository code with a write token.
+      - name: Request the v0.2.0 installer release from this commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          main_sha=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')
+          test "$main_sha" = "$GITHUB_SHA"
+          gh api "repos/$GH_REPO/contents/Directory.Build.props?ref=$GITHUB_SHA" > properties.json
+          python3 - <<'PY'
+          import base64
+          import json
+          import xml.etree.ElementTree as ET
+
+          with open("properties.json", encoding="utf-8") as stream:
+              document = json.load(stream)
+          version = ET.fromstring(base64.b64decode(document["content"])).findtext("PropertyGroup/Version")
+          if version != "0.2.0":
+              raise SystemExit("This request only publishes version 0.2.0")
+          PY
+          jq -n --arg sha "$GITHUB_SHA" \
+            '{ref:"main", inputs:{release_tag:"v0.2.0", release_commit:$sha}}' |
+            gh api --method POST "repos/$GH_REPO/actions/workflows/build.yml/dispatches" --input -
+          echo 'Requested v0.2.0 through Build and release.' >> "$GITHUB_STEP_SUMMARY"

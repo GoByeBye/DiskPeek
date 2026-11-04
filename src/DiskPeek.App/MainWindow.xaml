@@ -9,7 +9,7 @@
         <Border Background="{DynamicResource RaisedBrush}" CornerRadius="4" Margin="13,1,0,0" Padding="7,3" VerticalAlignment="Center"><TextBlock Text="OPEN SOURCE" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource MutedBrush}"/></Border>
         <TextBlock Text="Find what fills your disk." Foreground="{DynamicResource MutedBrush}" Margin="17,0,0,0" VerticalAlignment="Center"/>
       </StackPanel>
-      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="Theme" Foreground="{DynamicResource MutedBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/><ComboBox x:Name="ThemePicker" Width="94" MinHeight="28" SelectionChanged="Theme_Changed" AutomationProperties.Name="Color theme"><ComboBoxItem Content="System"/><ComboBoxItem Content="Dark"/><ComboBoxItem Content="Light"/></ComboBox><Button Content="About" Style="{StaticResource QuietButton}" Margin="9,0,0,0" Click="About_Click"/></StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="Theme" Foreground="{DynamicResource MutedBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/><ComboBox x:Name="ThemePicker" Width="94" MinHeight="28" SelectionChanged="Theme_Changed" AutomationProperties.Name="Color theme"><ComboBoxItem Content="System"/><ComboBoxItem Content="Dark"/><ComboBoxItem Content="Light"/></ComboBox><Button x:Name="UpdatesButton" Content="Updates" Style="{StaticResource QuietButton}" Margin="9,0,0,0" Click="Updates_Click"/><Button Content="About" Style="{StaticResource QuietButton}" Margin="9,0,0,0" Click="About_Click"/></StackPanel>
     </Grid>
 
     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,13" Margin="0,0,0,13">

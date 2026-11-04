@@ -10,7 +10,7 @@ using Microsoft.Win32.SafeHandles;
 
 return await Verification.RunAsync(args);
 
-internal static class Verification
+internal static partial class Verification
 {
     private static readonly List<TestOutcome> Outcomes = [];
     private static string FixtureRoot = "";
@@ -38,6 +38,14 @@ internal static class Verification
         await Run("Worker: rejects folders and non-volume device paths", TestWorkerTargets);
         await Run("Worker protocol: roundtrip metadata and completion", TestProtocolRoundtrip);
         await Run("Worker protocol: rejects lengths, truncation and mismatched targets", TestProtocolMalformed);
+        await Run("Updates: checking only notifies; applying requires consent and idle state", TestUpdateConsent);
+        await Run("Updates: portable mode never checks, downloads or applies", TestPortableUpdates);
+        await Run("Updates: stable newer versions only; rejected updates clear readiness", TestUpdateVersions);
+        await Run("Updates: staged payload size and SHA-256 are verified, including cached corruption", TestUpdatePayload);
+        await Run("Updates: cancellation and offline failures preserve safe state", TestUpdateFailures);
+        await Run("Updates: an active operation blocks apply and queued cancellation", TestUpdateConcurrency);
+        await Run("Updates: background checks honor opt-out, daily interval and clock drift", TestUpdateSchedule);
+        await Run("Settings: theme/update opt-out roundtrip and malformed recovery", TestUserSettings);
         await Run("Filesystem: empty, deep, Unicode and long paths", TestRealDirectory);
         await Run("Filesystem: hard-link accounting matches baseline", TestRealHardLinks);
         await Run("Filesystem: sparse allocation matches Windows", TestSparse);

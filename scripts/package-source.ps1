@@ -12,7 +12,7 @@ try {
     $zip = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Create)
     try {
         $files = @()
-        foreach ($folder in @('src','tests','scripts','docs','.github')) {
+        foreach ($folder in @('src','tests','scripts','docs','.github','.config','assets')) {
             $folderPath = Join-Path $repo $folder
             if (Test-Path -LiteralPath $folderPath) { $files += Get-ChildItem -LiteralPath $folderPath -Recurse -File | Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } }
         }

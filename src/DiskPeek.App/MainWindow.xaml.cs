@@ -37,7 +37,7 @@ public partial class MainWindow : Window
         searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         searchTimer.Tick += (_, _) => { searchTimer.Stop(); RefreshRows(); };
         InitializeTreeHover();
-        ThemePicker.SelectedIndex = 0;
+        ThemePicker.SelectedIndex = settingsStore.Settings.Theme switch { "Dark" => 1, "Light" => 2, _ => 0 };
         foreach (var drive in DriveInfo.GetDrives())
         {
             try { if (drive.IsReady) TargetBox.Items.Add(drive.RootDirectory.FullName); }
@@ -52,6 +52,7 @@ public partial class MainWindow : Window
         initialized = true;
         Loaded += (_, _) =>
         {
+            InitializeUpdates();
             string[] args = Environment.GetCommandLineArgs();
             if (args.Length > 1 && !args[1].StartsWith('-')) TargetBox.Text = args[1];
             int targetArgument = Array.IndexOf(args, "--target");
@@ -69,7 +70,12 @@ public partial class MainWindow : Window
 
     private void Theme_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (ThemePicker.SelectedItem is ComboBoxItem item) App.SetTheme(item.Content?.ToString() ?? "System");
+        if (ThemePicker.SelectedItem is ComboBoxItem item)
+        {
+            string theme = item.Content?.ToString() ?? "System";
+            App.SetTheme(theme);
+            if (initialized) { settingsStore.Settings.Theme = theme; SaveSettings(); }
+        }
         Treemap?.InvalidateVisual();
     }
 
@@ -81,7 +87,7 @@ public partial class MainWindow : Window
 
     private async void Scan_Click(object sender, RoutedEventArgs e)
     {
-        if (IsScanning) return;
+        if (IsScanning || updateApplying) return;
         string target;
         try
         {
@@ -153,7 +159,7 @@ public partial class MainWindow : Window
             RefreshRows();
             RefreshTypes();
             Treemap.SetResult(result, rootIndex, Metric);
-            ExportButton.IsEnabled = result.Count > 0;
+            ExportButton.IsEnabled = result.Count > 0 && !exportActive;
             IssuesButton.Visibility = result.Issues.Count > 0 || result.Partial || result.Cancelled || sessionNote.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
             IssuesButton.Content = result.Issues.Count > 0 ? $"{result.Issues.Count:N0} scan issues" : "Scan details";
             bool incomplete = result.Partial || result.Cancelled;
@@ -466,9 +472,10 @@ public partial class MainWindow : Window
     }
     private async void Export_Click(object sender, RoutedEventArgs e)
     {
-        if (result == null) return;
+        if (result == null || exportActive || updateApplying) return;
         var dialog = new SaveFileDialog { Title = "Export complete DiskPeek scan", Filter = "CSV report (*.csv)|*.csv", FileName = "diskpeek-scan-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".csv", AddExtension = true, DefaultExt = ".csv" };
         if (dialog.ShowDialog(this) != true) return;
+        exportActive = true;
         ExportButton.IsEnabled = false;
         try
         {
@@ -476,7 +483,7 @@ public partial class MainWindow : Window
             if (!closing) StatusText.Text = "Complete scan exported · " + dialog.FileName;
         }
         catch (Exception ex) { if (!closing) MessageBox.Show(this, ex.Message, "Export failed", MessageBoxButton.OK, MessageBoxImage.Warning); }
-        finally { if (!closing) ExportButton.IsEnabled = true; }
+        finally { exportActive = false; if (!closing) ExportButton.IsEnabled = true; }
     }
 
     private void Issues_Click(object sender, RoutedEventArgs e)
@@ -517,6 +524,7 @@ public partial class MainWindow : Window
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         closing = true;
+        StopUpdateChecks();
         scanCancellation?.Cancel();
         viewCancellation?.Cancel();
         typeCancellation?.Cancel();

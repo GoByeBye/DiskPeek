@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>DiskPeek</title>
+  <rect width="256" height="256" rx="48" fill="#10151e"/>
+  <path d="M56 40h62v176H56a12 12 0 0 1-12-12V52a12 12 0 0 1 12-12" fill="#63d8cc"/>
+  <path d="M134 40h66a12 12 0 0 1 12 12v68h-78z" fill="#638bd5"/>
+  <path d="M134 136h78v68a12 12 0 0 1-12 12h-66z" fill="#9374c4"/>
+</svg>

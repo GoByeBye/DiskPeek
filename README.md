@@ -4,7 +4,7 @@ A Windows disk-usage analyzer with a folder tree, largest-files view, file-type
 statistics, interactive treemap, search, and CSV export. Independent of WizTree
 and WinDirStat. Copyright (C) 2026 DiskPeek contributors.
 
-**[Download the latest stable portable Windows x64 build](https://github.com/GoByeBye/DiskPeek/releases/latest/download/DiskPeek-portable-win-x64.zip)** · [Latest release](https://github.com/GoByeBye/DiskPeek/releases/latest)
+**[Install DiskPeek for Windows x64](https://github.com/GoByeBye/DiskPeek/releases/latest/download/DiskPeek-setup-win-x64.exe)** · [Portable ZIP](https://github.com/GoByeBye/DiskPeek/releases/latest/download/DiskPeek-portable-win-x64.zip) · [Latest release](https://github.com/GoByeBye/DiskPeek/releases/latest)
 
 **License: GNU AGPL version 3 or later.** See [LICENSE](LICENSE).
 
@@ -26,9 +26,24 @@ The actual DiskPeek interface with demonstration data.
 
 ## Run
 
+Run the installer to install DiskPeek for your Windows account, add its Start
+menu shortcut, and enable in-app updates. Installation does not require
+administrator access. Uninstall through Windows **Settings → Apps**.
+
+Installed copies check for stable GitHub releases in the background, at most once
+per day, and notify you when a newer version is available. Use **Updates** to check
+manually, turn background checks off, download an update, or choose **Update and
+restart**. Updates require your approval; they are not silently downloaded or
+applied. Export any scan you want to keep before restarting. Theme and update
+preferences are stored separately from the installed application files.
+
+The portable ZIP is also available:
+
 Extract the complete downloaded portable ZIP and launch `DiskPeek.exe`.
 Keep `DiskPeek.Worker.exe` and the other packaged files beside it. Windows x64 is
 required; no .NET installation is needed for the self-contained release.
+Portable copies link to the installer instead of replacing their own files.
+See [installation and updates](docs/INSTALLATION.md) for details.
 
 Choose a drive, browse to a folder, or enter a network path, then select **Scan**.
 **Fast NTFS scan** is enabled by default. Supported local NTFS drive roots use a
@@ -84,10 +99,12 @@ Run from PowerShell on Windows x64:
 
 The script downloads the pinned official .NET SDK **10.0.403** to `work/sdk`,
 verifies its SHA-512 checksum, builds Release, runs the console verification
-suite, and publishes a self-contained portable app plus corresponding source
-under `outputs`. Build/tool caches remain in `work`; Visual Studio is optional.
+suite, and publishes an installer, self-contained portable app, update feed,
+and corresponding source under `outputs`. Build/tool caches remain in `work`;
+Visual Studio is optional.
 The first build requires access to Microsoft's download host and NuGet.org for
-Microsoft runtime packs. There are no additional NuGet library dependencies.
+Microsoft runtime packs and Velopack. The updater library and workspace-local
+packaging tool are both pinned to Velopack 1.2.161.
 
 Use `-SkipPackage` for a development build/test cycle or `-SkipTests` to skip
 verification explicitly. Fixtures are created and retained only beneath `work`;
@@ -103,10 +120,11 @@ portable copies do not lock the compiler's output.
 
 GitHub Actions builds, runs the verification suite, and packages Windows x64
 artifacts for pushes to `main`, pull requests, and manual runs. Successful runs
-provide the portable ZIP (with corresponding source), a separate source ZIP,
-and SHA-256 checksums. Verification diagnostics are uploaded even on failure.
-Every release also includes a byte-identical `DiskPeek-portable-win-x64.zip`
-alias, so the download link above follows the latest stable release automatically.
+provide the installer, portable ZIP (with corresponding source), a separate
+source ZIP, update package and feed, and SHA-256 checksums. Verification
+diagnostics are uploaded even on failure. Every release also includes stable
+installer and portable asset names, so both download links above follow the
+latest stable release automatically.
 
 To publish a release, update the version in `Directory.Build.props`, commit it,
 then push a matching tag such as `v0.1.0`. The tag pipeline repeats verification

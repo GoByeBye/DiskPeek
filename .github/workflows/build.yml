@@ -202,27 +202,7 @@ jobs:
           if ($null -eq $report.Failed -or $report.Failed -ne 0 -or $report.Passed -le 0) {
             throw 'Verification must report at least one passing test and zero failed tests.'
           }
-          $expectedPackages = @("DiskPeek-$env:PACKAGE_VERSION-win-x64.zip", "DiskPeek-$env:PACKAGE_VERSION-source.zip", 'DiskPeek-portable-win-x64.zip')
-          $checksumPath = 'outputs/ci/SHA256SUMS.txt'
-          if (-not (Test-Path -LiteralPath $checksumPath -PathType Leaf)) { throw 'SHA256SUMS.txt is missing.' }
-          $checksums = @{}
-          foreach ($line in Get-Content -LiteralPath $checksumPath) {
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?([^/\\]+)$') { throw "Invalid checksum entry: $line" }
-            if ($checksums.ContainsKey($Matches[2])) { throw "Duplicate checksum entry: $($Matches[2])" }
-            $checksums[$Matches[2]] = $Matches[1]
-          }
-          if ($checksums.Count -ne $expectedPackages.Count) { throw 'Checksum manifest must cover exactly the three release ZIPs.' }
-          foreach ($name in $expectedPackages) {
-            $path = Join-Path 'outputs/ci' $name
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing package: $name" }
-            if (-not $checksums.ContainsKey($name) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $checksums[$name]) {
-              throw "Missing or mismatched SHA-256 for $name"
-            }
-          }
-          if ($checksums['DiskPeek-portable-win-x64.zip'] -ne $checksums["DiskPeek-$env:PACKAGE_VERSION-win-x64.zip"]) {
-            throw 'Stable portable alias must be byte-identical to the versioned portable ZIP.'
-          }
+          .\scripts\verify-release.ps1 -Version $env:PACKAGE_VERSION -Directory outputs/ci
           "### Windows x64 verification" >> $env:GITHUB_STEP_SUMMARY
           "SDK: $((Get-Content global.json -Raw | ConvertFrom-Json).sdk.version) · Version: $env:PACKAGE_VERSION" >> $env:GITHUB_STEP_SUMMARY
           "Passed: $($report.Passed) · Failed: $($report.Failed) · Skipped: $($report.Skipped)" >> $env:GITHUB_STEP_SUMMARY
@@ -239,6 +219,10 @@ jobs:
             outputs/ci/DiskPeek-${{ steps.metadata.outputs.version }}-win-x64.zip
             outputs/ci/DiskPeek-${{ steps.metadata.outputs.version }}-source.zip
             outputs/ci/DiskPeek-portable-win-x64.zip
+            outputs/ci/DiskPeek-${{ steps.metadata.outputs.version }}-setup-win-x64.exe
+            outputs/ci/DiskPeek-setup-win-x64.exe
+            outputs/ci/DiskPeek-${{ steps.metadata.outputs.version }}-win-x64-full.nupkg
+            outputs/ci/releases.win-x64.json
             outputs/ci/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0
@@ -285,14 +269,21 @@ jobs:
           test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
           python3 - <<'PY'
           import hashlib
+          import json
           import os
           import pathlib
           import re
+          import xml.etree.ElementTree as ET
+          import zipfile
 
           version = os.environ["PACKAGE_VERSION"]
           versioned = f"DiskPeek-{version}-win-x64.zip"
           alias = "DiskPeek-portable-win-x64.zip"
-          packages = {versioned, f"DiskPeek-{version}-source.zip", alias}
+          installer = f"DiskPeek-{version}-setup-win-x64.exe"
+          installer_alias = "DiskPeek-setup-win-x64.exe"
+          full_package = f"DiskPeek-{version}-win-x64-full.nupkg"
+          packages = {versioned, f"DiskPeek-{version}-source.zip", alias, installer, installer_alias,
+                      full_package, "releases.win-x64.json"}
           files = list(pathlib.Path(".").iterdir())
           if {p.name for p in files} != packages | {"SHA256SUMS.txt"}:
               raise SystemExit("Missing or unexpected release assets")
@@ -307,13 +298,63 @@ jobs:
                   raise SystemExit("Invalid, unexpected, or duplicate checksum entry")
               hashes[match[2]] = match[1].lower()
           if set(hashes) != packages:
-              raise SystemExit("Checksums must cover exactly the three release ZIPs")
+              raise SystemExit("Checksums must cover exactly the seven release assets")
           for name in sorted(packages):
               with open(name, "rb") as stream:
                   if hashlib.file_digest(stream, "sha256").hexdigest() != hashes[name]:
                       raise SystemExit("SHA-256 mismatch: " + name)
           if hashes[alias] != hashes[versioned]:
               raise SystemExit("Portable alias differs from its versioned ZIP")
+          if hashes[installer_alias] != hashes[installer]:
+              raise SystemExit("Installer alias differs from its versioned Setup executable")
+          for name in (installer, installer_alias):
+              with open(name, "rb") as stream:
+                  if stream.read(2) != b"MZ":
+                      raise SystemExit("Installer is not a Windows executable")
+          feed = json.loads(pathlib.Path("releases.win-x64.json").read_text(encoding="utf-8-sig"))
+          entries = feed.get("Assets", [])
+          if len(entries) != 1:
+              raise SystemExit("Fresh win-x64 feed must contain exactly one full package")
+          entry = entries[0]
+          if (entry.get("PackageId"), entry.get("Version"), entry.get("Type"), entry.get("FileName")) != ("DiskPeek", version, "Full", full_package):
+              raise SystemExit("Feed package identity/version/channel mismatch")
+          with open(full_package, "rb") as stream:
+              sha1 = hashlib.file_digest(stream, "sha1").hexdigest()
+          if str(entry.get("SHA256", "")).lower() != hashes[full_package] or str(entry.get("SHA1", "")).lower() != sha1 or entry.get("Size") != pathlib.Path(full_package).stat().st_size:
+              raise SystemExit("Feed package hash or size mismatch")
+          for name in (versioned, f"DiskPeek-{version}-source.zip", full_package):
+              with zipfile.ZipFile(name) as archive:
+                  for member in archive.namelist():
+                      normalized = member.replace("\\", "/")
+                      if normalized.startswith("/") or ".." in pathlib.PurePosixPath(normalized).parts or re.match(r"^[A-Za-z]:", normalized):
+                          raise SystemExit("Unsafe archive member: " + name)
+          with zipfile.ZipFile(versioned) as archive:
+              if any(pathlib.PurePosixPath(member).name in {"sq.version", "Update.exe", ".portable"} for member in archive.namelist()):
+                  raise SystemExit("Plain portable ZIP contains installation metadata")
+              for required in ("DiskPeek.exe", "DiskPeek.Worker.exe", "DiskPeek.Cli.exe", "DiskPeek-source.zip", "LICENSE", "THIRD-PARTY-NOTICES.md"):
+                  if required not in archive.namelist():
+                      raise SystemExit("Portable ZIP missing " + required)
+          with zipfile.ZipFile(full_package) as archive:
+              specs = [member for member in archive.namelist() if re.fullmatch(r"[^/]+\.nuspec", member)]
+              if len(specs) != 1:
+                  raise SystemExit("Native update package must contain one nuspec")
+              metadata = ET.fromstring(archive.read(specs[0])).find("{*}metadata")
+              if metadata is None or metadata.findtext("{*}id") != "DiskPeek" or metadata.findtext("{*}version") != version:
+                  raise SystemExit("Native package nuspec identity/version mismatch")
+              for field, expected in {"channel": "win-x64", "rid": "win-x64", "os": "win", "mainExe": "DiskPeek.exe", "authors": "DiskPeek contributors"}.items():
+                  if metadata.findtext("{*}" + field) != expected:
+                      raise SystemExit("Native package " + field + " mismatch")
+              mains = [member for member in archive.namelist() if re.fullmatch(r"lib/[^/]+/DiskPeek\.exe", member)]
+              if len(mains) != 1:
+                  raise SystemExit("Native update package entry point missing or ambiguous")
+              prefix = mains[0][:-len("DiskPeek.exe")]
+              for required in ("DiskPeek.exe", "DiskPeek.Worker.exe", "DiskPeek.Cli.exe", "DiskPeek-source.zip", "LICENSE", "THIRD-PARTY-NOTICES.md", "sq.version"):
+                  if prefix + required not in archive.namelist():
+                      raise SystemExit("Native package missing " + required)
+              installed = ET.fromstring(archive.read(prefix + "sq.version")).find("{*}metadata")
+              for field, expected in {"id": "DiskPeek", "version": version, "channel": "win-x64", "rid": "win-x64", "mainExe": "DiskPeek.exe"}.items():
+                  if installed is None or installed.findtext("{*}" + field) != expected:
+                      raise SystemExit("Installed metadata " + field + " mismatch")
           PY
           # Reject tags moved since dispatch/push; these packages belong to TARGET_COMMIT.
           tag_json=$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG")
@@ -330,7 +371,9 @@ jobs:
             echo 'Release tag no longer matches the built commit; refusing to publish.' >&2
             exit 1
           fi
-          assets=("DiskPeek-$PACKAGE_VERSION-win-x64.zip" "DiskPeek-$PACKAGE_VERSION-source.zip" DiskPeek-portable-win-x64.zip SHA256SUMS.txt)
+          assets=("DiskPeek-$PACKAGE_VERSION-win-x64.zip" "DiskPeek-$PACKAGE_VERSION-source.zip" DiskPeek-portable-win-x64.zip
+            "DiskPeek-$PACKAGE_VERSION-setup-win-x64.exe" DiskPeek-setup-win-x64.exe
+            "DiskPeek-$PACKAGE_VERSION-win-x64-full.nupkg" releases.win-x64.json SHA256SUMS.txt)
           # Tag lookup omits drafts. List every release page and require an exact, unique tag.
           find_release() {
             gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" |

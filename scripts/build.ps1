@@ -1,6 +1,7 @@
 param(
     [switch]$SkipTests,
     [switch]$SkipPackage,
+    [switch]$SkipInstaller,
     [string]$DotnetExe,
     [string]$OutputDirectory = 'outputs',
     [string]$Version
@@ -70,8 +71,15 @@ if (-not $SkipPackage) {
     Compress-Archive -Path "$portable\*" -DestinationPath $binaryZip -Force
     $portableAlias = Join-Path $output 'DiskPeek-portable-win-x64.zip'
     Copy-Item -LiteralPath $binaryZip -Destination $portableAlias -Force
-    @($binaryZip, $sourceZip, $portableAlias) | ForEach-Object {
+    $releaseAssets = @($binaryZip, $sourceZip, $portableAlias)
+    if (-not $SkipInstaller) {
+        & (Join-Path $PSScriptRoot 'package-installer.ps1') -DotnetExe $dotnet -Version $Version -PortableDirectory $portable -OutputDirectory $output
+        $releaseAssets += @((Join-Path $output "DiskPeek-$Version-setup-win-x64.exe"), (Join-Path $output 'DiskPeek-setup-win-x64.exe'),
+            (Join-Path $output "DiskPeek-$Version-win-x64-full.nupkg"), (Join-Path $output 'releases.win-x64.json'))
+    }
+    $releaseAssets | ForEach-Object {
         $hash = Get-FileHash -LiteralPath $_ -Algorithm SHA256
         '{0}  {1}' -f $hash.Hash.ToLowerInvariant(), (Split-Path -Leaf $hash.Path)
     } | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding ascii
+    & (Join-Path $PSScriptRoot 'verify-release.ps1') -Version $Version -Directory $output -PortableOnly:$SkipInstaller
 }

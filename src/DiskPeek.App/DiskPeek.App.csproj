@@ -4,6 +4,11 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>DiskPeek</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>../../assets/diskpeek.ico</ApplicationIcon>
+    <StartupObject>DiskPeek.App.Program</StartupObject>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\DiskPeek.Core\DiskPeek.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DiskPeek.Core\DiskPeek.Core.csproj" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
+  </ItemGroup>
 </Project>
