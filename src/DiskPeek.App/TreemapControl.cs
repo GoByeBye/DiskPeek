@@ -10,7 +10,7 @@ namespace DiskPeek.App;
 
 internal readonly record struct MapTile(int Index, Rect Bounds, int Color, bool Grouped, int FolderIndex, bool Remainder);
 internal sealed record MapFolderGroup(Rect Bounds, Rect[] FileTiles);
-internal sealed record MapLayout(MapTile[] Tiles, Size Size, IReadOnlyDictionary<int, MapFolderGroup> FolderGroups);
+internal sealed record MapLayout(MapTile[] Tiles, Size Size, IReadOnlyDictionary<int, MapFolderGroup> FolderGroups, IReadOnlyDictionary<int, HashSet<int>> RemainderExcludedRoots);
 
 public sealed class TreemapControl : FrameworkElement
 {
@@ -24,6 +24,9 @@ public sealed class TreemapControl : FrameworkElement
     private Rect hoverGroupBounds = Rect.Empty;
     private MapLayout? layout;
     private CancellationTokenSource? layoutCancellation;
+    private CancellationTokenSource? deletionOverlayCancellation;
+    private ScanDeletionState? deletions;
+    private bool[] remainderChanged = [];
     private readonly DispatcherTimer resizeTimer;
     private static readonly Brush TextBrush = FrozenBrush(Color.FromRgb(247, 251, 255));
     private static readonly Pen TilePen = FrozenPen(Color.FromArgb(110, 10, 20, 32), .7);
@@ -31,6 +34,10 @@ public sealed class TreemapControl : FrameworkElement
     private static readonly Brush GroupFill = FrozenBrush(Color.FromArgb(46, 215, 255, 245));
     private static readonly Pen GroupShadowPen = FrozenPen(Color.FromArgb(220, 12, 28, 36), 4);
     private static readonly Pen GroupPen = FrozenPen(Color.FromRgb(148, 255, 226), 2);
+    private static readonly Brush DeletedFill = FrozenBrush(Color.FromRgb(188, 45, 62));
+    private static readonly Brush DeletedStripe = FrozenBrush(Color.FromRgb(255, 112, 124));
+    private static readonly Pen DeletedPen = FrozenPen(Color.FromRgb(255, 112, 124), 2);
+    public bool SelectedIsRemainder { get; private set; }
     public event Action<int>? NodeSelected;
     public event Action<int>? NodeActivated;
     public event Action<int>? NodeHovered;
@@ -46,23 +53,71 @@ public sealed class TreemapControl : FrameworkElement
         resizeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         resizeTimer.Tick += (_, _) => { resizeTimer.Stop(); Rebuild(); };
         SizeChanged += (_, _) => { resizeTimer.Stop(); resizeTimer.Start(); };
-        Unloaded += (_, _) => { resizeTimer.Stop(); layoutCancellation?.Cancel(); };
+        Unloaded += (_, _) => { resizeTimer.Stop(); layoutCancellation?.Cancel(); deletionOverlayCancellation?.Cancel(); };
     }
 
     public void SetResult(ScanResult? value, int selectedRoot, SizeMetric sizeMetric)
     {
+        if (result != value) deletions = null;
         result = value;
         root = selectedRoot;
         metric = sizeMetric;
         hover = -1;
         ClearHoverGroup();
         selected = -1;
+        SelectedIsRemainder = false;
+        deletionOverlayCancellation?.Cancel();
+        remainderChanged = [];
         layout = null;
         InvalidateVisual();
         Rebuild();
     }
 
-    public void SelectNode(int index) { selected = index; InvalidateVisual(); }
+    public void SelectNode(int index) { selected = index; SelectedIsRemainder = false; InvalidateVisual(); }
+    public void SetDeletionState(ScanDeletionState? state) { deletions = state; RefreshDeletions(); }
+
+    public async void RefreshDeletions()
+    {
+        deletionOverlayCancellation?.Cancel();
+        deletionOverlayCancellation = null;
+        var snapshot = layout;
+        var snapshotResult = result;
+        var state = deletions;
+        if (snapshot == null || snapshotResult == null || state == null) { InvalidateVisual(); return; }
+        var cancellation = deletionOverlayCancellation = new CancellationTokenSource();
+        SizeMetric snapshotMetric = metric;
+        try
+        {
+            // Remainders own only the omitted positive-size child subtrees. A deletion
+            // of a drawn or zero-size sibling must not paint an unrelated aggregate red.
+            // Keep only the bounded top-child exclusion sets; never allocate one flag/VM
+            // per scanned node just for drawing. Membership checks run off the UI thread.
+            var changed = await Task.Run(() =>
+            {
+                var flags = new bool[snapshot.Tiles.Length];
+                for (int i = 0; i < snapshot.Tiles.Length; i++)
+                {
+                    var tile = snapshot.Tiles[i];
+                    if (!tile.Remainder || state.GetDeletedCount(tile.Index) == 0 || state.IsDeleted(tile.Index)) continue;
+                    if (!snapshot.RemainderExcludedRoots.TryGetValue(tile.Index, out var excluded)) continue;
+                    int checkedChildren = 0;
+                    foreach (int child in snapshotResult.Children(tile.Index))
+                    {
+                        if ((checkedChildren++ & 4095) == 0) cancellation.Token.ThrowIfCancellationRequested();
+                        if (snapshotResult.Value(child, snapshotMetric) > 0 && !excluded.Contains(child) && state.GetDeletedCount(child) > 0) { flags[i] = true; break; }
+                    }
+                }
+                return flags;
+            }, cancellation.Token);
+            if (cancellation.IsCancellationRequested || layout != snapshot || deletions != state) return;
+            remainderChanged = changed;
+            int hoveredPosition = Array.FindIndex(snapshot.Tiles, tile => tile.Index == hover);
+            if (hoveredPosition >= 0) SetTileTooltip(snapshot.Tiles[hoveredPosition]);
+            InvalidateVisual();
+        }
+        catch (OperationCanceledException) { }
+        finally { if (deletionOverlayCancellation == cancellation) deletionOverlayCancellation = null; cancellation.Dispose(); }
+    }
 
     private async void Rebuild()
     {
@@ -79,8 +134,10 @@ public sealed class TreemapControl : FrameworkElement
             var next = await Task.Run(() => BuildLayout(snapshot, snapshotRoot, snapshotMetric, size, cancellation.Token), cancellation.Token);
             if (cancellation.IsCancellationRequested || result != snapshot) return;
             layout = next;
+            remainderChanged = [];
             ClearHoverGroup();
             UpdateHoverGroup(hover);
+            RefreshDeletions();
             InvalidateVisual();
         }
         catch (OperationCanceledException) { }
@@ -100,9 +157,19 @@ public sealed class TreemapControl : FrameworkElement
             return;
         }
         dc.PushTransform(new ScaleTransform(ActualWidth / layout.Size.Width, ActualHeight / layout.Size.Height));
-        foreach (var tile in layout.Tiles)
+        for (int tilePosition = 0; tilePosition < layout.Tiles.Length; tilePosition++)
         {
-            dc.DrawRectangle(TreemapPalette.BrushAt(tile.Color), TilePen, tile.Bounds);
+            var tile = layout.Tiles[tilePosition];
+            bool deleted = deletions?.IsDeleted(tile.Index) == true;
+            bool partlyDeleted = !deleted && (tile.Remainder ? tilePosition < remainderChanged.Length && remainderChanged[tilePosition] : tile.Grouped && deletions?.HasDeletedDescendants(tile.Index) == true);
+            dc.DrawRectangle(deleted ? DeletedFill : TreemapPalette.BrushAt(tile.Color), TilePen, tile.Bounds);
+            if (partlyDeleted)
+            {
+                var outline = tile.Bounds;
+                outline.Inflate(-1, -1);
+                if (!outline.IsEmpty && outline.Width > 0 && outline.Height > 0) dc.DrawRectangle(null, DeletedPen, outline);
+                dc.DrawRectangle(DeletedStripe, null, new Rect(tile.Bounds.X, Math.Max(tile.Bounds.Y, tile.Bounds.Bottom - 4), tile.Bounds.Width, Math.Min(4, tile.Bounds.Height)));
+            }
             if (result != null && tile.Bounds.Width > 84 && tile.Bounds.Height > 24)
             {
                 string label = tile.Remainder ? "More files / …" : tile.Grouped ? result.Nodes[tile.Index].Name + " / …" : result.Nodes[tile.Index].Name;
@@ -122,6 +189,16 @@ public sealed class TreemapControl : FrameworkElement
             {
                 dc.DrawRectangle(null, GroupShadowPen, groupBounds);
                 dc.DrawRectangle(null, GroupPen, groupBounds);
+            }
+        }
+        if (deletions != null)
+        {
+            foreach (var group in layout.FolderGroups)
+            {
+                if (deletions.IsDeleted(group.Key) || !deletions.HasDeletedDescendants(group.Key)) continue;
+                var bounds = group.Value.Bounds;
+                bounds.Inflate(-3, -3);
+                if (!bounds.IsEmpty && bounds.Width > 0 && bounds.Height > 0) dc.DrawRectangle(null, DeletedPen, bounds);
             }
         }
         foreach (var tile in layout.Tiles)
@@ -146,15 +223,28 @@ public sealed class TreemapControl : FrameworkElement
         UpdateHoverGroup(index);
         if (index >= 0 && result != null)
         {
-            string folder = hoverFolder >= 0 ? result.GetPath(hoverFolder) : "";
-            ToolTip = $"{result.GetPath(index)}\n{FormatUtil.Bytes(result.Value(index, metric))}" +
-                (tile?.Remainder == true ? "\nAdditional items in this folder; explore them in the table" :
-                 result.Nodes[index].IsDirectory ? "\nFolder group · double-click to zoom" : $"\nFolder group: {folder}\nDouble-click to zoom into this folder");
+            if (tile.HasValue) SetTileTooltip(tile.Value);
             NodeHovered?.Invoke(index);
         }
         InvalidateVisual();
     }
     protected override void OnMouseLeave(MouseEventArgs e) { base.OnMouseLeave(e); hover = -1; ClearHoverGroup(); InvalidateVisual(); }
+
+    private void SetTileTooltip(MapTile tile)
+    {
+        if (result == null || (uint)tile.Index >= (uint)result.Count) return;
+        string message = $"{result.GetPath(tile.Index)}\n{FormatUtil.Bytes(result.Value(tile.Index, metric))} at scan time";
+        if (deletions?.IsDeleted(tile.Index) == true) message += "\nDeleted or moved since scan. Rescan to update totals.";
+        else if (tile.Remainder)
+        {
+            int position = layout == null ? -1 : Array.FindIndex(layout.Tiles, candidate => candidate.Index == tile.Index && candidate.Remainder);
+            if (position >= 0 && position < remainderChanged.Length && remainderChanged[position]) message += "\nSome entries in this aggregate were deleted or moved since scan.";
+        }
+        else if (tile.Grouped && deletions?.HasDeletedDescendants(tile.Index) == true) message += "\nSome folder contents were deleted or moved since scan.";
+        else if (!tile.Remainder && deletions?.HasDeletedDescendants(tile.FolderIndex) == true) message += "\nThis folder group contains entries deleted or moved since scan.";
+        message += tile.Remainder ? "\nAdditional items in this folder; select an actual table item before recycling." : "\nDouble-click to zoom into this folder group.";
+        ToolTip = message;
+    }
 
     private void ClearHoverGroup(bool notify = true)
     {
@@ -185,9 +275,11 @@ public sealed class TreemapControl : FrameworkElement
     {
         base.OnMouseLeftButtonDown(e);
         Focus();
-        int index = Hit(e.GetPosition(this));
+        var tile = HitTile(e.GetPosition(this));
+        int index = tile?.Index ?? -1;
         if (index < 0) return;
         selected = index;
+        SelectedIsRemainder = tile?.Remainder == true;
         NodeSelected?.Invoke(index);
         if (e.ClickCount == 2) ActivateFolderGroup(index);
         InvalidateVisual();
@@ -208,6 +300,7 @@ public sealed class TreemapControl : FrameworkElement
             int position = Array.FindIndex(layout.Tiles, tile => tile.Index == selected);
             position = Math.Clamp(position + (e.Key is Key.Left or Key.Up ? -1 : 1), 0, layout.Tiles.Length - 1);
             selected = layout.Tiles[position].Index;
+            SelectedIsRemainder = layout.Tiles[position].Remainder;
             NodeSelected?.Invoke(selected);
             InvalidateVisual();
             e.Handled = true;
@@ -226,6 +319,7 @@ public sealed class TreemapControl : FrameworkElement
     {
         var tiles = new List<MapTile>();
         var folderBounds = new Dictionary<int, Rect>();
+        var remainderExclusions = new Dictionary<int, HashSet<int>>();
         var pending = new Stack<(int Index, Rect Bounds, int Depth)>();
         pending.Push((root, new Rect(size), 0));
         while (pending.TryPop(out var folder))
@@ -260,7 +354,11 @@ public sealed class TreemapControl : FrameworkElement
             var weighted = new List<(int Index, double Area, bool Grouped)>(limit + 1);
             double scale = folder.Bounds.Width * folder.Bounds.Height / total;
             for (int i = 0; i < limit; i++) weighted.Add((children[i], result.Value(children[i], metric) * scale, false));
-            if (childCount > limit) weighted.Add((folder.Index, Math.Max(0, total - children.Sum(index => (double)result.Value(index, metric))) * scale, true));
+            if (childCount > limit)
+            {
+                weighted.Add((folder.Index, Math.Max(0, total - children.Sum(index => (double)result.Value(index, metric))) * scale, true));
+                remainderExclusions[folder.Index] = new HashSet<int>(children);
+            }
             weighted.Sort((a, b) => b.Area.CompareTo(a.Area));
             Squarify(weighted, folder.Bounds, (index, bounds, grouped) =>
             {
@@ -272,7 +370,7 @@ public sealed class TreemapControl : FrameworkElement
         }
         var groups = tiles.GroupBy(tile => tile.FolderIndex).ToDictionary(group => group.Key, group =>
             new MapFolderGroup(folderBounds[group.Key], group.Select(tile => tile.Bounds).ToArray()));
-        return new(tiles.ToArray(), size, groups);
+        return new(tiles.ToArray(), size, groups, remainderExclusions);
 
         void Add(int index, Rect bounds, bool grouped, bool remainder = false)
         {

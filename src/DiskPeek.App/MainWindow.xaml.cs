@@ -37,6 +37,7 @@ public partial class MainWindow : Window
         searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         searchTimer.Tick += (_, _) => { searchTimer.Stop(); RefreshRows(); };
         InitializeTreeHover();
+        InitializeDeletionActions();
         ThemePicker.SelectedIndex = settingsStore.Settings.Theme switch { "Dark" => 1, "Light" => 2, _ => 0 };
         foreach (var drive in DriveInfo.GetDrives())
         {
@@ -45,7 +46,7 @@ public partial class MainWindow : Window
             catch (UnauthorizedAccessException) { }
         }
         TargetBox.Text = Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
-        Treemap.NodeSelected += RevealMapSelection;
+        Treemap.NodeSelected += SelectMapNode;
         Treemap.NodeActivated += Zoom;
         TypesList.PreviewMouseLeftButtonDown += Type_PreviewClick;
         Treemap.NodeHovered += index => { if (selectedIndex < 0) SelectedPath.Text = result?.GetPath(index) ?? ""; };
@@ -87,7 +88,7 @@ public partial class MainWindow : Window
 
     private async void Scan_Click(object sender, RoutedEventArgs e)
     {
-        if (IsScanning || updateApplying) return;
+        if (IsScanning || updateApplying || recycleActive) return;
         string target;
         try
         {
@@ -119,8 +120,12 @@ public partial class MainWindow : Window
             EngineNote.Text = value.Engine;
             StatusText.Text = $"{value.Phase} · {value.Entries:N0} entries · {value.Engine}";
         });
+        ScanDeletionMonitor? nextMonitor = null;
+        string? nextTrackingNote = null;
         try
         {
+            try { nextMonitor = new ScanDeletionMonitor(target); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { nextTrackingNote = ex.Message; }
             ScanResult next;
             bool fast = FastCheck.IsChecked == true;
             if (fast && WorkerClient.IsSupportedTarget(target))
@@ -142,9 +147,20 @@ public partial class MainWindow : Window
                 next = await ScanService.ScanAsync(new ScanRequest(target, ScanEngineKind.Directory), progress, cancellation.Token);
             }
             if (closing) return;
+            if (nextMonitor != null)
+            {
+                try { await nextMonitor.AttachAsync(next, deletionLifetime.Token); }
+                catch (OperationCanceledException) when (closing) { throw; }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { nextTrackingNote = ex.Message; nextMonitor.Dispose(); nextMonitor = null; }
+            }
+            if (closing) return;
             result = next;
+            AcceptDeletionMonitor(nextMonitor);
+            nextMonitor = null;
+            deletionTrackingNote = nextTrackingNote;
             rootIndex = 0;
             selectedIndex = -1;
+            selectionIsRemainder = false;
             extensionFilter = null;
             expanded.Clear();
             expanded.Add(0);
@@ -159,6 +175,7 @@ public partial class MainWindow : Window
             RefreshRows();
             RefreshTypes();
             Treemap.SetResult(result, rootIndex, Metric);
+            RefreshDeletionUi();
             ExportButton.IsEnabled = result.Count > 0 && !exportActive;
             IssuesButton.Visibility = result.Issues.Count > 0 || result.Partial || result.Cancelled || sessionNote.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
             IssuesButton.Content = result.Issues.Count > 0 ? $"{result.Issues.Count:N0} scan issues" : "Scan details";
@@ -183,6 +200,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            nextMonitor?.Dispose();
             if (scanCancellation == cancellation) scanCancellation = null;
             cancellation.Dispose();
             if (!closing) SetBusy(false);
@@ -191,10 +209,11 @@ public partial class MainWindow : Window
 
     private void SetBusy(bool busy)
     {
-        ScanButton.IsEnabled = BrowseButton.IsEnabled = TargetBox.IsEnabled = FastCheck.IsEnabled = !busy;
+        ScanButton.IsEnabled = BrowseButton.IsEnabled = TargetBox.IsEnabled = FastCheck.IsEnabled = !busy && !recycleActive && !updateApplying;
         StopButton.IsEnabled = busy;
         ScanButton.Content = result == null ? "Scan" : "Rescan";
         ScanProgressBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        RefreshRecycleControls();
     }
 
     private void Stop_Click(object sender, RoutedEventArgs e)
@@ -222,7 +241,7 @@ public partial class MainWindow : Window
         FilesValue.Text = $"{result.FileCounts[rootIndex]:N0}";
         FilesNote.Text = $"{result.DirectoryCounts[rootIndex]:N0} folders · {(result.Partial || result.Cancelled ? "partial results" : "scan complete")}";
         FreeValue.Text = result.VolumeFree.HasValue ? FormatUtil.Bytes(result.VolumeFree.Value) : "—";
-        FreeNote.Text = result.VolumeCapacity.HasValue ? $"of {FormatUtil.Bytes(result.VolumeCapacity.Value)} volume capacity" : "Unavailable for this target";
+        FreeNote.Text = result.VolumeCapacity.HasValue ? $"of {FormatUtil.Bytes(result.VolumeCapacity.Value)} · at scan time" : "Unavailable for this target";
         TimeValue.Text = Seconds(result.Elapsed);
         EngineNote.Text = result.Engine;
     }
@@ -247,7 +266,7 @@ public partial class MainWindow : Window
         {
             var entries = await Task.Run(() => ResultView.BuildRows(snapshot, snapshotRoot, metric, expandedSnapshot, query, largest, selectedSort, selectedDescending, cancellation.Token, selectedExtension, contextFolder), cancellation.Token);
             if (closing || cancellation.IsCancellationRequested || result != snapshot) return;
-            FileGrid.ItemsSource = new NodeRows(snapshot, entries, metric, snapshotRoot, expandedSnapshot);
+            FileGrid.ItemsSource = new NodeRows(snapshot, entries, metric, snapshotRoot, expandedSnapshot, deletionMonitor?.State);
             int reveal = pendingRevealIndex;
             pendingRevealIndex = -1;
             int selectedPosition = Array.FindIndex(entries, entry => entry.Index == (reveal >= 0 ? reveal : selectedIndex));
@@ -261,10 +280,11 @@ public partial class MainWindow : Window
             RowCount.Text = largest ? $"{entries.Length:N0} largest matching files · maximum 1,000 · current folder" : $"{entries.Length:N0} visible rows" + (query.Length > 0 ? " · matching names and their parent folders" : " · expand folders to explore");
             if (selectedExtension == "") RowCount.Text += " · no extension";
             CompleteTreeHoverReveal();
+            RefreshRecycleControls();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { if (!closing) { RowCount.Text = "View unavailable · " + ex.Message; } }
-        finally { if (viewCancellation == cancellation) viewCancellation = null; cancellation.Dispose(); }
+        finally { if (viewCancellation == cancellation) viewCancellation = null; cancellation.Dispose(); if (!closing) RefreshRecycleControls(); }
     }
 
     private async void RefreshTypes()
@@ -339,11 +359,11 @@ public partial class MainWindow : Window
     }
     private void File_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (FileGrid.SelectedItem is NodeRow row) SelectNode(row.Index);
+        if (FileGrid.SelectedItem is NodeRow row && row.BelongsTo(result)) SelectNode(row.Index);
     }
     private void File_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (FileGrid.SelectedItem is NodeRow row && e.OriginalSource is DependencyObject source && FindParent<DataGridRow>(source) != null) Zoom(row.Index);
+        if (FileGrid.SelectedItem is NodeRow row && row.BelongsTo(result) && e.OriginalSource is DependencyObject source && FindParent<DataGridRow>(source) != null) Zoom(row.Index);
     }
     private static T? FindParent<T>(DependencyObject? element) where T : DependencyObject
     {
@@ -371,6 +391,8 @@ public partial class MainWindow : Window
         SelectedSize.Text = details;
         RevealButton.IsEnabled = CopyButton.IsEnabled = true;
         Treemap.SelectNode(index);
+        RefreshSelectedDeletionStatus();
+        RefreshRecycleControls();
     }
     private void RevealMapSelection(int index)
     {
@@ -401,6 +423,7 @@ public partial class MainWindow : Window
     {
         if (result == null || !result.Nodes[index].IsDirectory || (result.Nodes[index].Flags & NodeFlags.ReparseSkipped) != 0) return;
         rootIndex = index;
+        selectionIsRemainder = false;
         expanded.Add(index);
         ClearFilters();
         UpdateSummary();
@@ -472,10 +495,11 @@ public partial class MainWindow : Window
     }
     private async void Export_Click(object sender, RoutedEventArgs e)
     {
-        if (result == null || exportActive || updateApplying) return;
+        if (result == null || exportActive || updateApplying || recycleActive) return;
         var dialog = new SaveFileDialog { Title = "Export complete DiskPeek scan", Filter = "CSV report (*.csv)|*.csv", FileName = "diskpeek-scan-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".csv", AddExtension = true, DefaultExt = ".csv" };
         if (dialog.ShowDialog(this) != true) return;
         exportActive = true;
+        RefreshRecycleControls();
         ExportButton.IsEnabled = false;
         try
         {
@@ -483,7 +507,7 @@ public partial class MainWindow : Window
             if (!closing) StatusText.Text = "Complete scan exported · " + dialog.FileName;
         }
         catch (Exception ex) { if (!closing) MessageBox.Show(this, ex.Message, "Export failed", MessageBoxButton.OK, MessageBoxImage.Warning); }
-        finally { exportActive = false; if (!closing) ExportButton.IsEnabled = true; }
+        finally { exportActive = false; if (!closing) { ExportButton.IsEnabled = true; RefreshRecycleControls(); } }
     }
 
     private void Issues_Click(object sender, RoutedEventArgs e)
@@ -509,6 +533,9 @@ public partial class MainWindow : Window
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key == Key.Delete && !e.IsRepeat && Keyboard.Modifiers == ModifierKeys.None &&
+            (Treemap.IsKeyboardFocusWithin || (FileGrid.IsKeyboardFocusWithin && FileGrid.SelectedItem is NodeRow current && current.BelongsTo(result))))
+        { RecycleSelected_Click(RecycleButton, new RoutedEventArgs()); e.Handled = true; return; }
         if (key == Key.F && Keyboard.Modifiers == ModifierKeys.Control) { SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; }
         else if (key == Key.F5 && !IsScanning) { Scan_Click(ScanButton, new RoutedEventArgs()); e.Handled = true; }
         else if (key == Key.Escape && IsScanning) { Stop_Click(StopButton, new RoutedEventArgs()); e.Handled = true; }
@@ -523,7 +550,16 @@ public partial class MainWindow : Window
     }
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (recycleActive)
+        {
+            e.Cancel = true;
+            closeAfterRecycle = true;
+            recycleCancellation?.Cancel();
+            StatusText.Text = "Stopping the recycle operation before closing…";
+            return;
+        }
         closing = true;
+        StopDeletionTracking();
         StopUpdateChecks();
         scanCancellation?.Cancel();
         viewCancellation?.Cancel();

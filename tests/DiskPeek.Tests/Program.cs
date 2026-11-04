@@ -56,6 +56,7 @@ internal static partial class Verification
         await Run("Filesystem: locked content does not prevent metadata scan", TestLocked);
         await Run("Filesystem: cancellation keeps partial results", TestCancellation);
         await Run("Filesystem: changing directory does not crash", TestChanging);
+        await RunDeletionTests();
         var report = new
         {
             GeneratedUtc = DateTime.UtcNow, FixtureRoot, Runtime = Environment.Version.ToString(), OS = Environment.OSVersion.ToString(),

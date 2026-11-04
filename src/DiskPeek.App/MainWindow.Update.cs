@@ -146,16 +146,16 @@ public partial class MainWindow
             }
             return;
         }
-        if (IsScanning || exportActive) { updateMessage = "Finish or stop the scan and wait for CSV exports before restarting. Close this window to return to the scan."; RefreshUpdateUi(); return; }
+        if (IsScanning || exportActive || recycleActive) { updateMessage = "Finish or stop the scan and wait for exports or recycling before restarting. Close this window to return to the scan."; RefreshUpdateUi(); return; }
         string prompt = result == null ? "Install the downloaded update and restart DiskPeek now?" : "Install the downloaded update and restart DiskPeek now?\n\nThe current scan results are kept only in memory and will be lost. Cancel and export them first if you want to keep them.";
         if (MessageBox.Show(updateDialog, prompt, "Update and restart", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
         try
         {
-            if (IsScanning || exportActive) throw new InvalidOperationException("A scan or export is still running.");
+            if (IsScanning || exportActive || recycleActive) throw new InvalidOperationException("A scan, export, or recycle operation is still running.");
             updateApplying = true;
             RefreshUpdateUi();
             SaveSettings();
-            updater.Apply(IsScanning, exportActive, confirmed: true);
+            updater.Apply(IsScanning, exportActive || recycleActive, confirmed: true);
         }
         catch (Exception ex) { updateApplying = false; updateMessage = "The update could not be applied. " + ex.Message; RefreshUpdateUi(); }
     }
@@ -179,8 +179,8 @@ public partial class MainWindow
             : $"Current version: {current}. Get the latest installer from the official GitHub release.";
         updateDialog.SaveWarning.Text = settingsWarning ?? "";
         updateDialog.Primary.Content = !installed ? "Get Windows installer" : updater!.DownloadReady ? "Update & restart" : available ? "Download update" : "Check for updates";
-        updateDialog.Primary.IsEnabled = !busy && (!installed || !updater!.DownloadReady || (!IsScanning && !exportActive));
-        updateDialog.Primary.ToolTip = installed && updater!.DownloadReady && (IsScanning || exportActive) ? "Finish or stop the scan and wait for exports before updating." : null;
+        updateDialog.Primary.IsEnabled = !busy && (!installed || !updater!.DownloadReady || (!IsScanning && !exportActive && !recycleActive));
+        updateDialog.Primary.ToolTip = installed && updater!.DownloadReady && (IsScanning || exportActive || recycleActive) ? "Finish or stop the scan and wait for exports or recycling before updating." : null;
         updateDialog.Check.Visibility = installed && available ? Visibility.Visible : Visibility.Collapsed;
         updateDialog.Check.IsEnabled = !busy;
         updateDialog.Cancel.Content = updateOperation != null ? "Cancel" : "Close";

@@ -1,4 +1,5 @@
 using System.Collections;
+using System.ComponentModel;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -18,9 +19,10 @@ internal sealed record TypeSummary(string Extension, long Bytes, int Files, doub
 
 // Row adapters are made only when WPF requests an item; the backing collection is an array
 // of two integers per visible row, not an object graph containing every scanned file.
-internal sealed class NodeRows(ScanResult result, FlatEntry[] entries, SizeMetric metric, int root, HashSet<int> expanded) : IList
+internal sealed class NodeRows(ScanResult result, FlatEntry[] entries, SizeMetric metric, int root, HashSet<int> expanded, ScanDeletionState? deletions = null) : IList
 {
-    public object? this[int index] { get => new NodeRow(result, entries[index], metric, root, expanded.Contains(entries[index].Index)); set => throw new NotSupportedException(); }
+    internal ScanResult Snapshot => result;
+    public object? this[int index] { get => new NodeRow(result, entries[index], metric, root, expanded.Contains(entries[index].Index), deletions); set => throw new NotSupportedException(); }
     public int Count => entries.Length;
     public bool IsReadOnly => true;
     public bool IsFixedSize => true;
@@ -43,8 +45,19 @@ internal sealed class NodeRows(ScanResult result, FlatEntry[] entries, SizeMetri
     public void RemoveAt(int index) => throw new NotSupportedException();
 }
 
-internal sealed class NodeRow(ScanResult result, FlatEntry entry, SizeMetric metric, int root, bool expanded)
+internal sealed class NodeRow(ScanResult result, FlatEntry entry, SizeMetric metric, int root, bool expanded, ScanDeletionState? deletions = null) : INotifyPropertyChanged
 {
+    internal bool BelongsTo(ScanResult? snapshot) => ReferenceEquals(result, snapshot);
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public bool IsDeleted => deletions?.IsDeleted(Index) == true;
+    public bool ContainsDeleted => deletions?.HasDeletedDescendants(Index) == true;
+    public string ChangeStatus => IsDeleted ? "Deleted / moved" : ContainsDeleted ? "Contents changed" : "";
+    public TextDecorationCollection? NameDecorations => IsDeleted ? TextDecorations.Strikethrough : null;
+    internal void RefreshDeletion()
+    {
+        foreach (string property in new[] { nameof(IsDeleted), nameof(ContainsDeleted), nameof(ChangeStatus), nameof(NameDecorations), nameof(KindBrush), nameof(Details) })
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
+    }
     public int Index => entry.Index;
     public string Name => Index == 0 ? result.Target : result.Nodes[Index].Name;
     public string Size => metric == SizeMetric.Allocated ? Allocated : Logical;
@@ -55,7 +68,7 @@ internal sealed class NodeRow(ScanResult result, FlatEntry entry, SizeMetric met
     public bool IsDirectory => result.Nodes[Index].IsDirectory;
     public string ExpandGlyph => IsDirectory ? expanded ? "▾" : "▸" : "";
     public string KindGlyph => IsDirectory ? "▰" : "▪";
-    public Brush KindBrush => IsDirectory ? (Brush)Application.Current.FindResource("AccentBrush") : TreemapPalette.BrushFor(result.Nodes[Index].Name);
+    public Brush KindBrush => IsDeleted || ContainsDeleted ? (Brush)Application.Current.FindResource("DeletionBrush") : IsDirectory ? (Brush)Application.Current.FindResource("AccentBrush") : TreemapPalette.BrushFor(result.Nodes[Index].Name);
     public Thickness Indent => new(entry.Depth * 17, 0, 0, 0);
     public string Details
     {
@@ -63,6 +76,8 @@ internal sealed class NodeRow(ScanResult result, FlatEntry entry, SizeMetric met
         {
             var node = result.Nodes[Index];
             var flags = new List<string>();
+            if (IsDeleted) flags.Add("Deleted or moved since scan. Sizes are from the original snapshot; Rescan to update totals.");
+            else if (ContainsDeleted) flags.Add($"Contains {deletions!.GetDeletedCount(Index):N0} deleted/moved snapshot entries.");
             if ((node.Flags & NodeFlags.SharedAllocation) != 0) flags.Add("Hard link: shared allocation is charged to one link only.");
             if ((node.Flags & NodeFlags.Inaccessible) != 0) flags.Add("Some metadata could not be read.");
             if ((node.Flags & NodeFlags.ReparseSkipped) != 0) flags.Add("Link or mount point: its target was not traversed.");

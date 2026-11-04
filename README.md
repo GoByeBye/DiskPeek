@@ -68,9 +68,33 @@ selecting **Scan** starts the scan and any required administrator prompt.
 - Right-click or use the selection panel to copy paths or reveal files in Explorer.
 - Export CSV writes the complete scan, including accounting and error status.
 
-The app reads metadata and does not delete or modify the scanned files. Cloud
-placeholder contents are not downloaded. Directory reparse points, including
-junctions and mounted volumes, are shown without traversing their targets.
+Scanning reads metadata without modifying scanned files. Cloud placeholder
+contents are not downloaded. Directory reparse points, including junctions and
+mounted volumes, are shown without traversing their targets.
+
+## Deleted items and Recycle Bin
+
+DiskPeek watches for deletions and moves while the scan runs and afterwards.
+Confirmed missing paths turn red in the treemap and file table. A grouped folder
+containing affected items gets a red indicator. Original tile areas, sizes,
+file-type statistics, and CSV exports remain a snapshot of the scan; they are
+not an estimate of space reclaimed. Rescan refreshes everything and clears the
+highlights, including paths that were recreated or restored.
+
+To remove an item, select an actual file or folder, then choose **Move to Recycle
+Bin** from the selection panel or table context menu, or press **Delete** while
+the table or treemap has focus. The confirmation shows the full path; a folder
+operation covers all its current contents, including changes since the scan.
+The selected item and its parent identities are checked again before recycling.
+
+Recycling runs with the app's ordinary permissions. There is no permanent-delete
+fallback or elevated deletion worker. Scan roots, network/removable locations,
+links, cloud placeholders, and entries without a verifiable identity must be
+managed in Explorer. Contents in the Recycle Bin continue to use disk space.
+
+Change notifications are best effort. Buffer overflow, unavailable storage, and
+unreadable metadata are reported as incomplete tracking; access failures are
+never interpreted as proof of deletion. See [deletion behavior](docs/DELETIONS.md).
 
 ## What the sizes mean
 
