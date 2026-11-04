@@ -4,6 +4,8 @@ A Windows disk-usage analyzer with a folder tree, largest-files view, file-type
 statistics, interactive treemap, search, and CSV export. Independent of WizTree
 and WinDirStat. Copyright (C) 2026 DiskPeek contributors.
 
+**[Download the portable Windows x64 build (v0.1.0)](https://github.com/GoByeBye/DiskPeek/releases/download/v0.1.0/DiskPeek-0.1.0-win-x64.zip)** · [Latest release](https://github.com/GoByeBye/DiskPeek/releases/latest)
+
 **License: GNU AGPL version 3 or later.** See [LICENSE](LICENSE).
 
 [![Windows build](https://github.com/GoByeBye/DiskPeek/actions/workflows/build.yml/badge.svg)](https://github.com/GoByeBye/DiskPeek/actions/workflows/build.yml)
