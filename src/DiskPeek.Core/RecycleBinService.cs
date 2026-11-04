@@ -51,7 +51,13 @@ public static class RecycleBinService
             Marshal.ThrowExceptionForHR(operation.SetOperationFlags(flags));
             Guid iid = typeof(IShellItem).GUID;
             Marshal.ThrowExceptionForHR(SHCreateItemFromParsingName(path, IntPtr.Zero, ref iid, out item));
-            var sink = new RecycleSink(token, () => ValidateItem(path, result.Nodes[index], null));
+            var sink = new RecycleSink(token, shellPath =>
+            {
+                if (!StringComparer.OrdinalIgnoreCase.Equals(Normalize(shellPath), path))
+                    throw new InvalidOperationException("Windows resolved a different path. Use Explorer or rescan before recycling.");
+                ValidateItem(path, result.Nodes[index], null);
+                ValidateItem(shellPath, result.Nodes[index], null);
+            });
             Marshal.ThrowExceptionForHR(operation.DeleteItem(item, sink));
             int performed = operation.PerformOperations();
             int abortedResult = operation.GetAnyOperationsAborted(out bool aborted);
@@ -85,7 +91,7 @@ public static class RecycleBinService
         {
             if ((uint)current >= (uint)result.Count || steps++ >= result.Count) throw new InvalidDataException("The scan path is invalid. Rescan before recycling.");
             string name = result.Nodes[current].Name;
-            if (string.IsNullOrWhiteSpace(name) || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            if (string.IsNullOrWhiteSpace(name) || name is "." or ".." || name.EndsWith(' ') || name.EndsWith('.') || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
                 throw new InvalidDataException("The scan path is invalid. Rescan before recycling.");
         }
         string scope = Normalize(result.Target), path = Normalize(result.GetPath(index));
@@ -172,7 +178,14 @@ public static class RecycleBinService
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = true)] private static extern int SHCreateItemFromParsingName(string path, IntPtr context, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IShellItem item);
 
     [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    public interface IShellItem { }
+    public interface IShellItem
+    {
+        [PreserveSig] int BindToHandler(IntPtr context, ref Guid handler, ref Guid iid, out IntPtr value);
+        [PreserveSig] int GetParent(out IShellItem parent);
+        [PreserveSig] int GetDisplayName(uint kind, out IntPtr name);
+        [PreserveSig] int GetAttributes(uint mask, out uint attributes);
+        [PreserveSig] int Compare(IShellItem other, uint hint, out int order);
+    }
 
     [ComImport, Guid("947AAB5F-0A5C-4C13-B4D6-4BF7836FC9F8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IFileOperation
@@ -221,7 +234,7 @@ public static class RecycleBinService
     }
 
     [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
-    private sealed class RecycleSink(CancellationToken token, Action validate) : IFileOperationProgressSink
+    private sealed class RecycleSink(CancellationToken token, Action<string> validate) : IFileOperationProgressSink
     {
         public bool Recycled { get; private set; }
         public int ItemResult { get; private set; }
@@ -230,8 +243,15 @@ public static class RecycleBinService
         {
             if (token.IsCancellationRequested) return unchecked((int)0x80004004);
             if ((flags & 0x80) == 0) { Refusal = "Windows cannot recycle this item. Permanent deletion was refused."; return unchecked((int)0x80004004); }
-            try { validate(); return 0; }
+            IntPtr name = IntPtr.Zero;
+            try
+            {
+                Marshal.ThrowExceptionForHR(item.GetDisplayName(0x80058000, out name)); // SIGDN_FILESYSPATH
+                validate(Marshal.PtrToStringUni(name) ?? throw new InvalidOperationException("Windows did not identify the item to recycle."));
+                return 0;
+            }
             catch (Exception ex) { Refusal = ex.Message; return unchecked((int)0x80004004); }
+            finally { if (name != IntPtr.Zero) Marshal.FreeCoTaskMem(name); }
         }
         public int PostDeleteItem(uint flags, IShellItem item, int result, IShellItem? created) { ItemResult = result; Recycled |= result >= 0 && created != null; return 0; }
         public int StartOperations() => token.IsCancellationRequested ? unchecked((int)0x80004004) : 0;

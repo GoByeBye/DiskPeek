@@ -227,7 +227,7 @@ internal static partial class Verification
             var changed = original; changed.Attributes |= attributes; result.Nodes[index] = changed;
             Assert(!RecycleBinService.ValidateSelection(result, index).Success, "A link/offline placeholder was eligible for deletion.");
         }
-        foreach (var name in new[] { ".", "..", "..\\outside.txt", root + "-sibling\\outside.txt", @"C:\", "$Recycle.Bin" })
+        foreach (var name in new[] { ".", "..", "..\\outside.txt", root + "-sibling\\outside.txt", @"C:\", "$Recycle.Bin", "ambiguous.", "ambiguous " })
         {
             var changed = original; changed.Name = name; result.Nodes[index] = changed;
             Assert(!RecycleBinService.ValidateSelection(result, index).Success, "A protected/out-of-scope path was eligible: " + name);
