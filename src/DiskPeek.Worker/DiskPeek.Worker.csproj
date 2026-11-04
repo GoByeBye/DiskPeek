@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>WinExe</OutputType><AssemblyName>DiskPeek.Worker</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../DiskPeek.Core/DiskPeek.Core.csproj" /></ItemGroup>
+</Project>

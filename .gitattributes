@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.cs text eol=lf
+*.csproj text eol=lf
+*.props text eol=lf
+*.xaml text eol=lf
+*.yml text eol=lf
+*.ps1 text eol=lf
+# Preserve upstream legal notice formatting when checking our source changes.
+docs/licenses/* -whitespace

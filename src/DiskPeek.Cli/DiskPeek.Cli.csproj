@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>DiskPeek.Cli</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../DiskPeek.Core/DiskPeek.Core.csproj" /></ItemGroup>
+</Project>

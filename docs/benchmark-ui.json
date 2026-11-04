@@ -1,0 +1,23 @@
+{
+  "synthetic_file_count": 1000000,
+  "started_utc": "2026-11-04T00:20:41.9782978Z",
+  "seed_and_aggregate_ms": 539.9901,
+  "initial_projection_and_map_ms": 2268.9564,
+  "visible_projection_count": 1000001,
+  "initial_realized_rows": 7,
+  "treemap_tiles": 4097,
+  "treemap_bounds_valid": true,
+  "scroll_to_last_ms": 43.6434,
+  "scrolled_realized_rows": 6,
+  "wildcard_search_ms": 751.5018,
+  "wildcard_visible_rows": 22,
+  "largest_files_ms": 61.7975,
+  "largest_files_count": 1000,
+  "dispatcher_pulses": 110,
+  "max_dispatcher_delay_ms": 55.24720000000001,
+  "working_set_bytes": 487919616,
+  "peak_working_set_bytes": 487919616,
+  "managed_heap_bytes": 327583400,
+  "passed": true,
+  "completed_utc": "2026-11-04T00:20:45.6580732Z"
+}

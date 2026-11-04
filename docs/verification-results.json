@@ -1,0 +1,166 @@
+{
+  "GeneratedUtc": "2026-11-04T00:15:17.4442892Z",
+  "FixtureRoot": "work/verification-fixture",
+  "Runtime": "10.0.14",
+  "OS": "Microsoft Windows NT 10.0.26300.0",
+  "Passed": 25,
+  "Failed": 0,
+  "Skipped": 0,
+  "Outcomes": [
+    {
+      "Name": "Aggregation: nested and out-of-order parent records",
+      "Status": "passed",
+      "Milliseconds": 19.8168,
+      "Detail": null
+    },
+    {
+      "Name": "Hard links: deterministic scoped allocation",
+      "Status": "passed",
+      "Milliseconds": 0.6381,
+      "Detail": null
+    },
+    {
+      "Name": "Unknown allocation and skipped subtrees stay incomplete",
+      "Status": "passed",
+      "Milliseconds": 0.1573,
+      "Detail": null
+    },
+    {
+      "Name": "Cyclic parent references are rejected",
+      "Status": "passed",
+      "Milliseconds": 0.4106,
+      "Detail": null
+    },
+    {
+      "Name": "CSV: Unicode, quoting, statuses, and unknown values",
+      "Status": "passed",
+      "Milliseconds": 28.8182,
+      "Detail": null
+    },
+    {
+      "Name": "MFT: valid resident FILE record and names",
+      "Status": "passed",
+      "Milliseconds": 11.2081,
+      "Detail": null
+    },
+    {
+      "Name": "MFT: 4Kn volume records use 512-byte fixup stride",
+      "Status": "passed",
+      "Milliseconds": 0.1836,
+      "Detail": null
+    },
+    {
+      "Name": "MFT: nonresident sparse and fragmented runs",
+      "Status": "passed",
+      "Milliseconds": 3.0847,
+      "Detail": null
+    },
+    {
+      "Name": "MFT: malformed record boundaries and fixups",
+      "Status": "passed",
+      "Milliseconds": 0.4127,
+      "Detail": null
+    },
+    {
+      "Name": "MFT: attribute continuation references",
+      "Status": "passed",
+      "Milliseconds": 1.7785,
+      "Detail": null
+    },
+    {
+      "Name": "MFT: deterministic malformed-input corpus",
+      "Status": "passed",
+      "Milliseconds": 8.9428,
+      "Detail": null
+    },
+    {
+      "Name": "MFT direct I/O: unaligned and cross-chunk reads",
+      "Status": "passed",
+      "Milliseconds": 35.5648,
+      "Detail": null
+    },
+    {
+      "Name": "Worker: rejects folders and non-volume device paths",
+      "Status": "passed",
+      "Milliseconds": 9.8967,
+      "Detail": null
+    },
+    {
+      "Name": "Worker protocol: roundtrip metadata and completion",
+      "Status": "passed",
+      "Milliseconds": 6.5141,
+      "Detail": null
+    },
+    {
+      "Name": "Worker protocol: rejects lengths, truncation and mismatched targets",
+      "Status": "passed",
+      "Milliseconds": 5.7042,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: empty, deep, Unicode and long paths",
+      "Status": "passed",
+      "Milliseconds": 177.8389,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: hard-link accounting matches baseline",
+      "Status": "passed",
+      "Milliseconds": 3.8416,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: sparse allocation matches Windows",
+      "Status": "passed",
+      "Milliseconds": 5.8315,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: NTFS compression matches Windows",
+      "Status": "passed",
+      "Milliseconds": 5.3461,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: alternate streams excluded consistently",
+      "Status": "passed",
+      "Milliseconds": 12.055,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: directory reparse loops are not traversed",
+      "Status": "passed",
+      "Milliseconds": 6.5723,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: denied directory reports partial",
+      "Status": "passed",
+      "Milliseconds": 12.3706,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: locked content does not prevent metadata scan",
+      "Status": "passed",
+      "Milliseconds": 3.553,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: cancellation keeps partial results",
+      "Status": "passed",
+      "Milliseconds": 3416.6648,
+      "Detail": null
+    },
+    {
+      "Name": "Filesystem: changing directory does not crash",
+      "Status": "passed",
+      "Milliseconds": 137.3479,
+      "Detail": null
+    }
+  ],
+  "UntestedExternalScenarios": [
+    "Cloud provider hydration behavior requires a configured cloud placeholder fixture.",
+    "Raw-volume engine equivalence requires an elevated controlled NTFS test volume; parser paths are tested here.",
+    "UI, UAC cancellation, and worker process failure require GUI integration checks."
+  ]
+}

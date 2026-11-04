@@ -1,0 +1,15 @@
+{
+  "GeneratedUtc": "2026-11-04T00:11:46.435716Z",
+  "Entries": 1000001,
+  "Files": 1000000,
+  "BuildMilliseconds": 152.1163,
+  "AggregateMilliseconds": 158.2734,
+  "SearchMilliseconds": 9.8343,
+  "SearchMatches": 3700,
+  "TopThousandMilliseconds": 7.2014,
+  "AllocatedManagedBytes": 258047040,
+  "RetainedManagedBytes": 156300000,
+  "WorkingSetBytes": 250519552,
+  "PeakWorkingSetBytes": 279666688,
+  "Note": "Synthetic compact-model benchmark, not filesystem I/O or UI frame timing. Flat one-million-entry directory stresses aggregation and result queries."
+}

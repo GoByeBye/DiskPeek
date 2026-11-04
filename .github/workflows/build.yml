@@ -1,0 +1,182 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+
+jobs:
+  build:
+    name: Windows x64 build, tests, and packages
+    runs-on: windows-2025
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      artifact-id: ${{ steps.packages.outputs.artifact-id }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read pinned SDK and validate release version
+        id: metadata
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdk = (Get-Content -LiteralPath global.json -Raw | ConvertFrom-Json).sdk.version
+          if ($sdk -notmatch '^\d+\.\d+\.\d+$') { throw 'global.json must pin a stable, exact SDK version.' }
+          [xml]$properties = Get-Content -LiteralPath Directory.Build.props -Raw
+          $version = $properties.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
+            throw 'Directory.Build.props must declare a release version such as 0.1.0 or 0.2.0-rc.1.'
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne "v$version") {
+            throw "Release tag '$env:GITHUB_REF_NAME' must exactly match Directory.Build.props version 'v$version'."
+          }
+          "sdk=$sdk" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install the exact SDK from global.json
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        env:
+          # Keep newer SDKs in the runner image from changing the global.json pin.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/diskpeek-dotnet
+        with:
+          dotnet-version: ${{ steps.metadata.outputs.sdk }}
+          skip-lts-prepass: true
+
+      - name: Confirm SDK selection
+        env:
+          EXPECTED_SDK: ${{ steps.metadata.outputs.sdk }}
+        run: |
+          $actual = & dotnet --version
+          if ($LASTEXITCODE -ne 0 -or $actual.Trim() -cne $env:EXPECTED_SDK) {
+            throw "Expected SDK $env:EXPECTED_SDK; selected '$actual'."
+          }
+          dotnet --info
+
+      - name: Build, run verification, and package
+        run: |
+          .\scripts\build.ps1 -DotnetExe (Get-Command dotnet).Source -OutputDirectory outputs/ci
+
+      - name: Validate test report and package checksums
+        env:
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportPath = 'outputs/ci/verification-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'Verification report is missing.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          if ($null -eq $report.Failed -or $report.Failed -ne 0 -or $report.Passed -le 0) {
+            throw 'Verification must report at least one passing test and zero failed tests.'
+          }
+          $expectedPackages = @("DiskPeek-$env:PACKAGE_VERSION-win-x64.zip", "DiskPeek-$env:PACKAGE_VERSION-source.zip")
+          $checksumPath = 'outputs/ci/SHA256SUMS.txt'
+          if (-not (Test-Path -LiteralPath $checksumPath -PathType Leaf)) { throw 'SHA256SUMS.txt is missing.' }
+          $checksums = @{}
+          foreach ($line in Get-Content -LiteralPath $checksumPath) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?([^/\\]+)$') { throw "Invalid checksum entry: $line" }
+            if ($checksums.ContainsKey($Matches[2])) { throw "Duplicate checksum entry: $($Matches[2])" }
+            $checksums[$Matches[2]] = $Matches[1]
+          }
+          foreach ($name in $expectedPackages) {
+            $path = Join-Path 'outputs/ci' $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing package: $name" }
+            if (-not $checksums.ContainsKey($name) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $checksums[$name]) {
+              throw "Missing or mismatched SHA-256 for $name"
+            }
+          }
+          "### Windows x64 verification" >> $env:GITHUB_STEP_SUMMARY
+          "SDK: $((Get-Content global.json -Raw | ConvertFrom-Json).sdk.version) · Version: $env:PACKAGE_VERSION" >> $env:GITHUB_STEP_SUMMARY
+          "Passed: $($report.Passed) · Failed: $($report.Failed) · Skipped: $($report.Skipped)" >> $env:GITHUB_STEP_SUMMARY
+          if ($report.Skipped -gt 0) {
+            'Some environment-dependent scenarios were skipped; see the verification artifact for reasons.' >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload downloadable packages
+        id: packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: DiskPeek-${{ steps.metadata.outputs.version }}-win-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            outputs/ci/DiskPeek-*-win-x64.zip
+            outputs/ci/DiskPeek-*-source.zip
+            outputs/ci/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: outputs/ci/verification-results.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  release:
+    name: Publish versioned GitHub release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # This job never checks out or executes repository code with its write token.
+      - name: Download the verified packages from this build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: release
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify and publish release assets
+        shell: bash
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PACKAGE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
+          test -f "DiskPeek-$PACKAGE_VERSION-win-x64.zip"
+          test -f "DiskPeek-$PACKAGE_VERSION-source.zip"
+          sha256sum --check SHA256SUMS.txt
+          assets=("DiskPeek-$PACKAGE_VERSION-win-x64.zip" "DiskPeek-$PACKAGE_VERSION-source.zip" SHA256SUMS.txt)
+          if existing_draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null); then
+            if [ "$existing_draft" != 'true' ]; then
+              echo 'This release is already published. Published assets are not overwritten.' >&2
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --draft --generate-notes --title "DiskPeek $PACKAGE_VERSION"
+          fi
+          prerelease=false
+          if [[ "$PACKAGE_VERSION" == *-* ]]; then prerelease=true; fi
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease="$prerelease"
+          echo "Published DiskPeek $PACKAGE_VERSION" >> "$GITHUB_STEP_SUMMARY"
