@@ -14,7 +14,7 @@ on:
         required: false
         default: ''
       release_commit:
-        description: 'Optional expected 40-character commit SHA for a release. Leave blank to use the dispatched main commit.'
+        description: 'Optional exact source commit SHA for a release or retry. Leave blank to build the dispatched main commit.'
         type: string
         required: false
         default: ''
@@ -39,16 +39,19 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+    outputs:
+      commit: ${{ steps.tag.outputs.commit }}
     steps:
       # Read project metadata through the API; no repository code is executed.
-      - name: Validate version and tag the exact dispatched commit
+      - name: Validate version and tag the exact source commit
+        id: tag
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           REQUESTED_TAG: ${{ inputs.release_tag }}
-          TARGET_COMMIT: ${{ github.sha }}
-          EXPECTED_COMMIT: ${{ inputs.release_commit }}
+          DEFAULT_COMMIT: ${{ github.sha }}
+          REQUESTED_COMMIT: ${{ inputs.release_commit }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -65,12 +68,9 @@ jobs:
           match = re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?", tag)
           if not match or any(part.isdigit() and len(part) > 1 and part.startswith("0") for part in (match[4] or "").split(".")):
               raise SystemExit("release_tag must be a v-prefixed semantic version, such as v0.1.1")
-          commit = os.environ["TARGET_COMMIT"]
+          commit = os.environ["REQUESTED_COMMIT"] or os.environ["DEFAULT_COMMIT"]
           if not re.fullmatch(r"[a-f0-9]{40}", commit):
-              raise SystemExit("Expected an exact dispatched commit SHA")
-          expected = os.environ["EXPECTED_COMMIT"]
-          if expected and (not re.fullmatch(r"[a-f0-9]{40}", expected) or expected != commit):
-              raise SystemExit("main advanced or release_commit does not match the dispatched commit; no tag was changed")
+              raise SystemExit("release_commit must be an exact 40-character commit SHA")
           repo = "repos/" + os.environ["GH_REPO"]
 
           def api(path, payload=None, allow_missing=False):
@@ -85,13 +85,15 @@ jobs:
                   raise SystemExit(response.stderr or "GitHub API request failed")
               return data
 
+          if api(repo + "/git/commits/" + commit).get("sha") != commit:
+              raise SystemExit("Selected source is not the requested commit object")
           metadata = api(repo + "/contents/Directory.Build.props?ref=" + commit)
           if metadata.get("encoding") != "base64":
               raise SystemExit("Expected base64 project metadata")
           content = base64.b64decode("".join(metadata["content"].split()), validate=True)
           version = ET.fromstring(content).findtext("./PropertyGroup/Version")
           if tag != "v" + (version or ""):
-              raise SystemExit("Requested tag must match Directory.Build.props at the dispatched commit")
+              raise SystemExit("Requested tag must match Directory.Build.props at the selected source commit")
           reference = api(repo + "/git/ref/tags/" + tag, allow_missing=True)
           if reference is not None:
               target = reference["object"]
@@ -107,6 +109,8 @@ jobs:
               annotation = api(repo + "/git/tags", {"tag": tag, "message": "DiskPeek " + version, "object": commit, "type": "commit"})
               api(repo + "/git/refs", {"ref": "refs/tags/" + tag, "sha": annotation["sha"]})
           print("Verified release tag " + tag + " at " + commit)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("commit=" + commit + "\n")
           PY
 
   build:
@@ -121,20 +125,25 @@ jobs:
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       release-tag: ${{ steps.metadata.outputs.release_tag }}
+      source-commit: ${{ steps.metadata.outputs.source_commit }}
       artifact-id: ${{ steps.packages.outputs.artifact-id }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ github.sha }}
+          ref: ${{ needs.prepare-tag.outputs.commit || github.sha }}
 
       - name: Read pinned SDK and validate release version
         id: metadata
         env:
           MANUAL_RELEASE_TAG: ${{ inputs.release_tag }}
+          PREPARED_COMMIT: ${{ needs.prepare-tag.outputs.commit }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $sourceCommit = & git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[a-f0-9]{40}$') { throw 'Could not resolve the checked-out source commit.' }
+          if ($env:PREPARED_COMMIT -ne '' -and $sourceCommit -cne $env:PREPARED_COMMIT) { throw 'Checkout does not match the prepared source commit.' }
           $sdk = (Get-Content -LiteralPath global.json -Raw | ConvertFrom-Json).sdk.version
           if ($sdk -notmatch '^\d+\.\d+\.\d+$') { throw 'global.json must pin a stable, exact SDK version.' }
           [xml]$properties = Get-Content -LiteralPath Directory.Build.props -Raw
@@ -157,6 +166,7 @@ jobs:
           "sdk=$sdk" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "release_tag=$releaseTag" >> $env:GITHUB_OUTPUT
+          "source_commit=$sourceCommit" >> $env:GITHUB_OUTPUT
 
       - name: Install the exact SDK from global.json
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
@@ -269,7 +279,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.build.outputs.release-tag }}
           PACKAGE_VERSION: ${{ needs.build.outputs.version }}
-          TARGET_COMMIT: ${{ github.sha }}
+          TARGET_COMMIT: ${{ needs.build.outputs.source-commit }}
         run: |
           set -euo pipefail
           test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
@@ -321,8 +331,18 @@ jobs:
             exit 1
           fi
           assets=("DiskPeek-$PACKAGE_VERSION-win-x64.zip" "DiskPeek-$PACKAGE_VERSION-source.zip" DiskPeek-portable-win-x64.zip SHA256SUMS.txt)
-          if existing_draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null); then
-            if [ "$existing_draft" != 'true' ]; then
+          # Tag lookup omits drafts. List every release page and require an exact, unique tag.
+          find_release() {
+            gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" |
+              jq -c --arg tag "$RELEASE_TAG" '
+                [.[][] | select(.tag_name == $tag)] |
+                if length > 1 then error("Ambiguous releases for tag")
+                elif length == 0 then null else .[0] end
+              '
+          }
+          release_json=$(find_release)
+          if [ "$release_json" != 'null' ]; then
+            if [ "$(jq -r '.draft' <<<"$release_json")" != 'true' ]; then
               echo 'This release is already published. Published assets are not overwritten.' >&2
               exit 1
             fi
@@ -330,10 +350,15 @@ jobs:
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --draft --generate-notes --title "DiskPeek $PACKAGE_VERSION"
           fi
+          release_json=$(find_release)
+          if [ "$release_json" = 'null' ] || [ "$(jq -r '.draft' <<<"$release_json")" != 'true' ]; then
+            echo 'Expected one draft release after asset upload; refusing to publish.' >&2
+            exit 1
+          fi
+          release_id=$(jq -r '.id' <<<"$release_json")
           prerelease=false
           make_latest=legacy
           if [[ "$PACKAGE_VERSION" == *-* ]]; then prerelease=true; make_latest=false; fi
-          release_id=$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq '.id')
           # Publish and apply latest-selection policy in the same API update.
           gh api --method PATCH "repos/$GH_REPO/releases/$release_id" \
             --field draft=false --field prerelease="$prerelease" --raw-field make_latest="$make_latest" >/dev/null

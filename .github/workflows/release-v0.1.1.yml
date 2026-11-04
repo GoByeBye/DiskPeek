@@ -25,7 +25,7 @@ jobs:
     steps:
       # Only dispatch the standard pipeline; tag creation, tests, and publishing
       # remain in build.yml. No source checkout or repository code is executed.
-      - name: Request the v0.1.1 release from this main commit
+      - name: Resume v0.1.1 using its original tagged source
         shell: bash
         run: |
           set -euo pipefail
@@ -43,7 +43,9 @@ jobs:
           if version != "0.1.1":
               raise SystemExit("This request only publishes version 0.1.1")
           PY
-          jq -n --arg sha "$GITHUB_SHA" \
+          # Keep the unpublished v0.1.1 tag fixed while retrying with the repaired
+          # workflow. The standard pipeline verifies and builds this exact source.
+          jq -n --arg sha "77a7e44029184606a53c80fb7a14d0116ebf09a0" \
             '{ref:"main", inputs:{release_tag:"v0.1.1", release_commit:$sha}}' |
             gh api --method POST "repos/$GH_REPO/actions/workflows/build.yml/dispatches" --input -
           echo 'Requested v0.1.1 through Build and release; that pipeline performs all validation and publishing.' >> "$GITHUB_STEP_SUMMARY"

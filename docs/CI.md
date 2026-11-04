@@ -61,9 +61,9 @@ The publish request applies draft, prerelease, and latest policy together.
 Leave `release_tag` blank for a build-only manual run. No release is made simply
 by pushing the repository for the first time.
 
-An explicit manual release must use `main` and match `Directory.Build.props` at
-the exact commit selected when the workflow was dispatched. A separate API-only
-job validates that metadata and creates an annotated tag at the same commit.
+An explicit manual release must run its workflow from `main` and match
+`Directory.Build.props` at the selected source commit. A separate API-only job
+validates that metadata and creates an annotated tag at that source commit.
 An existing tag is accepted only if it already resolves to that exact commit;
 tags are never moved. The read-only Windows job checks out that commit, builds,
 tests, and packages it before publication. The workflow continues directly to
@@ -71,14 +71,19 @@ its release job because tags created using its automatic token do not trigger a
 second tag-push workflow. If verification fails, the tag remains available for
 inspection or retrying the run; the release is not published.
 
-The optional `release_commit` input asserts an expected 40-character commit SHA
-before any tag mutation. Leave it blank for a normal manual release from the
-dispatched `main` commit. Automated callers can supply their intended SHA so the
-request fails safely if `main` advances before dispatch is accepted. The narrowly
+The optional `release_commit` input selects an exact 40-character source commit
+SHA. Leave it blank to build the dispatched `main` commit. For a retry after a
+workflow-only fix, supply the existing tag's source SHA: the updated workflow on
+`main` rebuilds and publishes that original source without moving the tag. Source
+version, checkout, artifacts, and the final publication tag check all use the
+selected source SHA. Automated callers can pin their intended source in this way.
+The narrowly
 scoped `release-v0.1.1.yml` helper invokes this same path with both inputs; it has
 only `actions: write` and `contents: read`, and does not create tags or releases.
 
-The release job can resume an existing draft after an interrupted upload. It
+The release job locates drafts by exact tag across the paginated releases
+collection, rejects ambiguous matches, and can resume an existing draft after an
+interrupted upload. It
 refuses to overwrite an already published release; use a new version/tag for
 changed binaries. Releases keep their downloadable assets independently of the
 30-day Actions-artifact retention window.
