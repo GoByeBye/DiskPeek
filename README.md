@@ -4,7 +4,7 @@ A Windows disk-usage analyzer with a folder tree, largest-files view, file-type
 statistics, interactive treemap, search, and CSV export. Independent of WizTree
 and WinDirStat. Copyright (C) 2026 DiskPeek contributors.
 
-**[Download the portable Windows x64 build (v0.1.0)](https://github.com/GoByeBye/DiskPeek/releases/download/v0.1.0/DiskPeek-0.1.0-win-x64.zip)** · [Latest release](https://github.com/GoByeBye/DiskPeek/releases/latest)
+**[Download the latest stable portable Windows x64 build](https://github.com/GoByeBye/DiskPeek/releases/latest/download/DiskPeek-portable-win-x64.zip)** · [Latest release](https://github.com/GoByeBye/DiskPeek/releases/latest)
 
 **License: GNU AGPL version 3 or later.** See [LICENSE](LICENSE).
 
@@ -12,9 +12,21 @@ and WinDirStat. Copyright (C) 2026 DiskPeek contributors.
 
 Source: [GoByeBye/DiskPeek](https://github.com/GoByeBye/DiskPeek).
 
+## Screenshots
+
+The actual DiskPeek interface with demonstration data.
+
+**Folder tree and treemap · dark theme**
+
+![DiskPeek folder tree and treemap in dark theme](docs/screenshots/diskpeek-dark.png)
+
+**Largest files · light theme**
+
+![DiskPeek largest files and treemap in light theme](docs/screenshots/diskpeek-light.png)
+
 ## Run
 
-Extract the complete `DiskPeek-0.1.0-win-x64.zip` folder and launch `DiskPeek.exe`.
+Extract the complete downloaded portable ZIP and launch `DiskPeek.exe`.
 Keep `DiskPeek.Worker.exe` and the other packaged files beside it. Windows x64 is
 required; no .NET installation is needed for the self-contained release.
 
@@ -93,6 +105,8 @@ GitHub Actions builds, runs the verification suite, and packages Windows x64
 artifacts for pushes to `main`, pull requests, and manual runs. Successful runs
 provide the portable ZIP (with corresponding source), a separate source ZIP,
 and SHA-256 checksums. Verification diagnostics are uploaded even on failure.
+Every release also includes a byte-identical `DiskPeek-portable-win-x64.zip`
+alias, so the download link above follows the latest stable release automatically.
 
 To publish a release, update the version in `Directory.Build.props`, commit it,
 then push a matching tag such as `v0.1.0`. The tag pipeline repeats verification

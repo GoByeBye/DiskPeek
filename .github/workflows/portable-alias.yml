@@ -1,0 +1,66 @@
+name: Add portable download alias to v0.1.0
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/portable-alias.yml]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: portable-alias-v0.1.0
+  cancel-in-progress: false
+
+jobs:
+  alias:
+    if: github.repository == 'GoByeBye/DiskPeek' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: GoByeBye/DiskPeek
+      RELEASE_TAG: v0.1.0
+      VERSIONED_NAME: DiskPeek-0.1.0-win-x64.zip
+      ALIAS_NAME: DiskPeek-portable-win-x64.zip
+      EXPECTED_SHA256: 4284285e5211670cad0c20d3259c03ce187ef27991f2e478ce449b782570cde8
+    steps:
+      # Add a new, identical asset. Existing release files and checksums stay intact.
+      - name: Verify original release and add its stable portable alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata=$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG")
+          jq -e --arg tag "$RELEASE_TAG" '
+            .id == 433402308 and .tag_name == $tag and .draft == false and
+            .prerelease == false and (.immutable // false) == false
+          ' <<<"$metadata" >/dev/null
+          gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" |
+            jq -e '.object.type == "commit" and .object.sha == "d1306b937be30e5403125bb770a2160d1a281db4"' >/dev/null
+          original=$(jq -c --arg name "$VERSIONED_NAME" '.assets[] | select(.name == $name)' <<<"$metadata")
+          jq -e --arg hash "sha256:$EXPECTED_SHA256" '
+            .id == 707758076 and .state == "uploaded" and .size > 0 and .digest == $hash
+          ' <<<"$original" >/dev/null
+          existing=$(jq -c --arg name "$ALIAS_NAME" '.assets[] | select(.name == $name)' <<<"$metadata")
+          if [ -n "$existing" ]; then
+            jq -e --arg hash "sha256:$EXPECTED_SHA256" --argjson size "$(jq '.size' <<<"$original")" '
+              .state == "uploaded" and .digest == $hash and .size == $size
+            ' <<<"$existing" >/dev/null
+            echo 'The identical portable alias is already present.'
+            exit 0
+          fi
+          mkdir release
+          gh release download "$RELEASE_TAG" --pattern "$VERSIONED_NAME" --pattern SHA256SUMS.txt --dir release
+          actual=$(sha256sum "release/$VERSIONED_NAME" | cut -d ' ' -f 1)
+          test "$actual" = "$EXPECTED_SHA256"
+          manifest_hash=$(tr -d '\r' < release/SHA256SUMS.txt | awk -v name="$VERSIONED_NAME" '$2 == name {print $1}')
+          test "$manifest_hash" = "$EXPECTED_SHA256"
+          cp "release/$VERSIONED_NAME" "release/$ALIAS_NAME"
+          gh release upload "$RELEASE_TAG" "release/$ALIAS_NAME"
+          gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" |
+            jq -e --arg name "$ALIAS_NAME" --arg hash "sha256:$EXPECTED_SHA256" '
+              any(.assets[]; .name == $name and .digest == $hash and .state == "uploaded")
+            ' >/dev/null
+          echo 'Added the portable alias without replacing existing release assets.' >> "$GITHUB_STEP_SUMMARY"

@@ -68,7 +68,9 @@ if (-not $SkipPackage) {
     if (Test-Path -LiteralPath (Join-Path $repo 'docs')) { Copy-Item -LiteralPath (Join-Path $repo 'docs') -Destination $portable -Recurse -Force }
     $binaryZip = Join-Path $output "DiskPeek-$Version-win-x64.zip"
     Compress-Archive -Path "$portable\*" -DestinationPath $binaryZip -Force
-    @($binaryZip, $sourceZip) | ForEach-Object {
+    $portableAlias = Join-Path $output 'DiskPeek-portable-win-x64.zip'
+    Copy-Item -LiteralPath $binaryZip -Destination $portableAlias -Force
+    @($binaryZip, $sourceZip, $portableAlias) | ForEach-Object {
         $hash = Get-FileHash -LiteralPath $_ -Algorithm SHA256
         '{0}  {1}' -f $hash.Hash.ToLowerInvariant(), (Split-Path -Leaf $hash.Path)
     } | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding ascii

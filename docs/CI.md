@@ -18,15 +18,18 @@ locally:
 
 The console verification runner must exit successfully. CI also requires a fresh
 `verification-results.json` with at least one passing test and zero failures,
-both versioned ZIP packages, and matching entries in `SHA256SUMS.txt`. Skipped
-environment-dependent tests remain visible in the report and run summary.
+both versioned ZIP packages, the stable portable alias, and matching entries in
+`SHA256SUMS.txt`. CI also checks that the alias is byte-identical to the versioned
+portable ZIP. Skipped environment-dependent tests remain visible in the report
+and run summary.
 
 After a successful run, open **Actions → Build and release → the run → Artifacts**.
 The `DiskPeek-<version>-win-x64-<run>-<attempt>` artifact contains:
 
 - `DiskPeek-<version>-win-x64.zip`: the self-contained portable Windows app.
 - `DiskPeek-<version>-source.zip`: the corresponding source, including CI files.
-- `SHA256SUMS.txt`: SHA-256 checksums for the packages.
+- `DiskPeek-portable-win-x64.zip`: a byte-identical copy of the versioned portable ZIP.
+- `SHA256SUMS.txt`: SHA-256 checksums for all three ZIPs in new builds.
 
 Extract the Actions artifact, then extract the portable app ZIP before launching
 `DiskPeek.exe`. The separate `verification-<run>-<attempt>` artifact retains the
@@ -45,11 +48,17 @@ retain the verification limits described in `VALIDATION.md`.
    `v0.1.0` or `v0.2.0-rc.1`.
 3. Wait for the Windows build and verification to pass. The release job checks
    the downloaded artifact's integrity and the package checksums, creates a draft
-   GitHub release, attaches both ZIPs and `SHA256SUMS.txt`, then publishes it.
+   GitHub release, attaches both versioned ZIPs, the stable portable alias, and
+   `SHA256SUMS.txt`, then publishes it.
 
 A mismatched or malformed `v*` tag fails before building. Versions containing a
-prerelease suffix are published as GitHub prereleases. Manual runs always stop
-after artifact creation, even when launched against a tag. No release is made
+prerelease suffix are published as GitHub prereleases and explicitly excluded from
+GitHub's latest-release link. Stable releases use GitHub's automatic `legacy`
+latest-selection policy, which considers release creation dates and higher
+semantic versions. A later-published backport is not unconditionally forced latest.
+The publish request applies draft, prerelease, and latest policy together.
+Manual runs always stop after artifact creation, even when launched against a
+tag. No release is made
 simply by pushing the repository for the first time.
 
 The release job can resume an existing draft after an interrupted upload. It
@@ -57,13 +66,32 @@ refuses to overwrite an already published release; use a new version/tag for
 changed binaries. Releases keep their downloadable assets independently of the
 30-day Actions-artifact retention window.
 
+## Automatic portable download link
+
+The README's portable download uses this stable release-asset URL:
+
+[Download the latest stable Windows x64 portable ZIP](https://github.com/GoByeBye/DiskPeek/releases/latest/download/DiskPeek-portable-win-x64.zip)
+
+Every new release includes that exact asset name alongside the versioned portable
+and source ZIPs. The README link automatically serves the portable ZIP from
+GitHub's latest stable release; no README version edit is required. Stable
+publication uses GitHub's date/version-based selection rather than forcing an
+older backport to latest. Prerelease publication leaves the stable download link alone.
+Versioned assets and their corresponding source remain available on each release;
+the pipeline does not replace assets in an already published release.
+
+The initial v0.1.0 release can gain the alias by adding an identical copy of its
+existing portable ZIP. Its original versioned ZIPs and checksum manifest remain
+unchanged; the existing portable checksum also verifies the identical alias bytes.
+
 ## Permissions and maintenance
 
 Pull-request and build jobs use a read-only repository token, do not receive
 release credentials, and check out source without persisted Git credentials.
-Only the tag-triggered release job has `contents: write`; it downloads verified
-artifacts and does not check out or execute repository scripts. The workflow uses
-GitHub's automatic token and requires no personal access token or extra secrets.
+The tag-triggered release job and the narrowly scoped one-off v0.1.0 release and
+`portable-alias.yml` backfill jobs have `contents: write`. They publish verified
+packages without checking out or executing repository scripts. The workflows use
+GitHub's automatic token and require no personal access token or extra secrets.
 Repository policy must permit that job's release permission and enabled Actions.
 
 All external actions are official GitHub actions pinned to full commit SHAs.
