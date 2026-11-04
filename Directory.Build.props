@@ -9,7 +9,7 @@
     <Deterministic>true</Deterministic>
     <PathMap>$(MSBuildThisFileDirectory)=/_/DiskPeek/</PathMap>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>DiskPeek contributors</Authors>
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
     <DebugType>embedded</DebugType>

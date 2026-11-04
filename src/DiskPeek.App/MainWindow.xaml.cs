@@ -495,7 +495,8 @@ public partial class MainWindow : Window
     }
     private void About_Click(object sender, RoutedEventArgs e)
     {
-        MessageBox.Show(this, "DiskPeek 0.1.0\n\nAn independent, open-source disk usage analyzer for Windows.\nLicensed under the GNU Affero General Public License, version 3 or later.\n\nFast NTFS scanning is enabled by default for supported local NTFS drive roots. Selecting Scan requests administrator access for a read-only worker. Folders, other filesystems, and network paths automatically use directory scanning. File contents are not read for usage analysis.\n\nHover a file tile to highlight visible files in its immediate folder. Double-click a folder tile to zoom.\n\nDiskPeek is not affiliated with WizTree or WinDirStat. Source and license are included with this distribution.", "About DiskPeek", MessageBoxButton.OK, MessageBoxImage.Information);
+        var version = typeof(MainWindow).Assembly.GetName().Version!.ToString(3);
+        MessageBox.Show(this, $"DiskPeek {version}\n\nAn independent, open-source disk usage analyzer for Windows.\nLicensed under the GNU Affero General Public License, version 3 or later.\n\nFast NTFS scanning is enabled by default for supported local NTFS drive roots. Selecting Scan requests administrator access for a read-only worker. Folders, other filesystems, and network paths automatically use directory scanning. File contents are not read for usage analysis.\n\nHover a file tile to highlight visible files in its immediate folder. Double-click a folder tile to zoom.\n\nDiskPeek is not affiliated with WizTree or WinDirStat. Source and license are included with this distribution.", "About DiskPeek", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)

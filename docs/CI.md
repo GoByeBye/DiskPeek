@@ -2,8 +2,8 @@
 
 The `Build and release` GitHub Actions workflow runs on pull requests to `main`,
 pushes to `main`, version-tag pushes, and manual **Run workflow** requests.
-Pushes to `main` and manual runs build downloadable artifacts; they do not
-create a GitHub release.
+Pushes to `main` and manual runs with a blank `release_tag` build downloadable
+artifacts. A manual run with an explicit release tag also publishes a release.
 
 ## Continuous integration
 
@@ -44,8 +44,9 @@ retain the verification limits described in `VALIDATION.md`.
 ## Publishing a release
 
 1. Set `Version` in `Directory.Build.props`, commit the change, and merge to `main`.
-2. Create and push an annotated tag matching that version exactly, such as
-   `v0.1.0` or `v0.2.0-rc.1`.
+2. Open **Actions → Build and release → Run workflow**, select `main`, and enter
+   the matching `release_tag`, such as `v0.1.1` or `v0.2.0-rc.1`. Alternatively,
+   create and push an annotated tag matching the project version.
 3. Wait for the Windows build and verification to pass. The release job checks
    the downloaded artifact's integrity and the package checksums, creates a draft
    GitHub release, attaches both versioned ZIPs, the stable portable alias, and
@@ -57,9 +58,25 @@ GitHub's latest-release link. Stable releases use GitHub's automatic `legacy`
 latest-selection policy, which considers release creation dates and higher
 semantic versions. A later-published backport is not unconditionally forced latest.
 The publish request applies draft, prerelease, and latest policy together.
-Manual runs always stop after artifact creation, even when launched against a
-tag. No release is made
-simply by pushing the repository for the first time.
+Leave `release_tag` blank for a build-only manual run. No release is made simply
+by pushing the repository for the first time.
+
+An explicit manual release must use `main` and match `Directory.Build.props` at
+the exact commit selected when the workflow was dispatched. A separate API-only
+job validates that metadata and creates an annotated tag at the same commit.
+An existing tag is accepted only if it already resolves to that exact commit;
+tags are never moved. The read-only Windows job checks out that commit, builds,
+tests, and packages it before publication. The workflow continues directly to
+its release job because tags created using its automatic token do not trigger a
+second tag-push workflow. If verification fails, the tag remains available for
+inspection or retrying the run; the release is not published.
+
+The optional `release_commit` input asserts an expected 40-character commit SHA
+before any tag mutation. Leave it blank for a normal manual release from the
+dispatched `main` commit. Automated callers can supply their intended SHA so the
+request fails safely if `main` advances before dispatch is accepted. The narrowly
+scoped `release-v0.1.1.yml` helper invokes this same path with both inputs; it has
+only `actions: write` and `contents: read`, and does not create tags or releases.
 
 The release job can resume an existing draft after an interrupted upload. It
 refuses to overwrite an already published release; use a new version/tag for
@@ -88,9 +105,10 @@ unchanged; the existing portable checksum also verifies the identical alias byte
 
 Pull-request and build jobs use a read-only repository token, do not receive
 release credentials, and check out source without persisted Git credentials.
-The tag-triggered release job and the narrowly scoped one-off v0.1.0 release and
-`portable-alias.yml` backfill jobs have `contents: write`. They publish verified
-packages without checking out or executing repository scripts. The workflows use
+The API-only manual tag-preparation job, release-publication job, and narrowly
+scoped one-off v0.1.0 release and `portable-alias.yml` backfill jobs have
+`contents: write`. These jobs never check out or execute repository scripts.
+The workflows use
 GitHub's automatic token and require no personal access token or extra secrets.
 Repository policy must permit that job's release permission and enabled Actions.
 

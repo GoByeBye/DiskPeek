@@ -7,13 +7,24 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional release tag, such as v0.1.1. Leave blank to build only. Releases require main and an exact project-version match.'
+        type: string
+        required: false
+        default: ''
+      release_commit:
+        description: 'Optional expected 40-character commit SHA for a release. Leave blank to use the dispatched main commit.'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && format('refs/tags/{0}', inputs.release_tag)) || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' && !(github.event_name == 'workflow_dispatch' && inputs.release_tag != '') }}
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
@@ -21,8 +32,87 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
 
 jobs:
+  prepare-tag:
+    name: Validate and prepare the requested release tag
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # Read project metadata through the API; no repository code is executed.
+      - name: Validate version and tag the exact dispatched commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+          TARGET_COMMIT: ${{ github.sha }}
+          EXPECTED_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import subprocess
+          import xml.etree.ElementTree as ET
+
+          if os.environ["GITHUB_REF"] != "refs/heads/main":
+              raise SystemExit("Manual releases must run from main")
+          tag = os.environ["REQUESTED_TAG"]
+          match = re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?", tag)
+          if not match or any(part.isdigit() and len(part) > 1 and part.startswith("0") for part in (match[4] or "").split(".")):
+              raise SystemExit("release_tag must be a v-prefixed semantic version, such as v0.1.1")
+          commit = os.environ["TARGET_COMMIT"]
+          if not re.fullmatch(r"[a-f0-9]{40}", commit):
+              raise SystemExit("Expected an exact dispatched commit SHA")
+          expected = os.environ["EXPECTED_COMMIT"]
+          if expected and (not re.fullmatch(r"[a-f0-9]{40}", expected) or expected != commit):
+              raise SystemExit("main advanced or release_commit does not match the dispatched commit; no tag was changed")
+          repo = "repos/" + os.environ["GH_REPO"]
+
+          def api(path, payload=None, allow_missing=False):
+              command = ["gh", "api", path]
+              if payload is not None:
+                  command += ["--method", "POST", "--input", "-"]
+              response = subprocess.run(command, input=json.dumps(payload) if payload is not None else None, text=True, capture_output=True)
+              data = json.loads(response.stdout) if response.stdout.strip() else {}
+              if response.returncode:
+                  if allow_missing and str(data.get("status")) == "404":
+                      return None
+                  raise SystemExit(response.stderr or "GitHub API request failed")
+              return data
+
+          metadata = api(repo + "/contents/Directory.Build.props?ref=" + commit)
+          if metadata.get("encoding") != "base64":
+              raise SystemExit("Expected base64 project metadata")
+          content = base64.b64decode("".join(metadata["content"].split()), validate=True)
+          version = ET.fromstring(content).findtext("./PropertyGroup/Version")
+          if tag != "v" + (version or ""):
+              raise SystemExit("Requested tag must match Directory.Build.props at the dispatched commit")
+          reference = api(repo + "/git/ref/tags/" + tag, allow_missing=True)
+          if reference is not None:
+              target = reference["object"]
+              for _ in range(5):
+                  if target["type"] == "commit":
+                      break
+                  if target["type"] != "tag":
+                      raise SystemExit("Existing tag does not resolve to a commit")
+                  target = api(repo + "/git/tags/" + target["sha"])["object"]
+              if target["type"] != "commit" or target["sha"] != commit:
+                  raise SystemExit("Existing tag points to another commit; it will not be moved")
+          else:
+              annotation = api(repo + "/git/tags", {"tag": tag, "message": "DiskPeek " + version, "object": commit, "type": "commit"})
+              api(repo + "/git/refs", {"ref": "refs/tags/" + tag, "sha": annotation["sha"]})
+          print("Verified release tag " + tag + " at " + commit)
+          PY
+
   build:
     name: Windows x64 build, tests, and packages
+    needs: prepare-tag
+    if: ${{ always() && !cancelled() && (needs.prepare-tag.result == 'success' || needs.prepare-tag.result == 'skipped') }}
     runs-on: windows-2025
     timeout-minutes: 35
     defaults:
@@ -30,15 +120,19 @@ jobs:
         shell: pwsh
     outputs:
       version: ${{ steps.metadata.outputs.version }}
+      release-tag: ${{ steps.metadata.outputs.release_tag }}
       artifact-id: ${{ steps.packages.outputs.artifact-id }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
 
       - name: Read pinned SDK and validate release version
         id: metadata
+        env:
+          MANUAL_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $ErrorActionPreference = 'Stop'
           $sdk = (Get-Content -LiteralPath global.json -Raw | ConvertFrom-Json).sdk.version
@@ -51,8 +145,18 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne "v$version") {
             throw "Release tag '$env:GITHUB_REF_NAME' must exactly match Directory.Build.props version 'v$version'."
           }
+          $releaseTag = ''
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_TYPE -eq 'tag') {
+            $releaseTag = $env:GITHUB_REF_NAME
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:MANUAL_RELEASE_TAG -ne '') {
+            if ($env:GITHUB_REF -cne 'refs/heads/main' -or $env:MANUAL_RELEASE_TAG -cne "v$version") {
+              throw 'Manual release requires main and an exact project-version match.'
+            }
+            $releaseTag = $env:MANUAL_RELEASE_TAG
+          }
           "sdk=$sdk" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
+          "release_tag=$releaseTag" >> $env:GITHUB_OUTPUT
 
       - name: Install the exact SDK from global.json
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
@@ -142,7 +246,7 @@ jobs:
   release:
     name: Publish versioned GitHub release
     needs: build
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: ${{ always() && !cancelled() && needs.build.result == 'success' && needs.build.outputs.release-tag != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -163,8 +267,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.build.outputs.release-tag }}
           PACKAGE_VERSION: ${{ needs.build.outputs.version }}
+          TARGET_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
@@ -200,6 +305,21 @@ jobs:
           if hashes[alias] != hashes[versioned]:
               raise SystemExit("Portable alias differs from its versioned ZIP")
           PY
+          # Reject tags moved since dispatch/push; these packages belong to TARGET_COMMIT.
+          tag_json=$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG")
+          object_type=$(jq -r '.object.type' <<<"$tag_json")
+          object_sha=$(jq -r '.object.sha' <<<"$tag_json")
+          for attempt in 1 2 3 4 5; do
+            if [ "$object_type" = 'commit' ]; then break; fi
+            test "$object_type" = 'tag'
+            tag_json=$(gh api "repos/$GH_REPO/git/tags/$object_sha")
+            object_type=$(jq -r '.object.type' <<<"$tag_json")
+            object_sha=$(jq -r '.object.sha' <<<"$tag_json")
+          done
+          if [ "$object_type" != 'commit' ] || [ "$object_sha" != "$TARGET_COMMIT" ]; then
+            echo 'Release tag no longer matches the built commit; refusing to publish.' >&2
+            exit 1
+          fi
           assets=("DiskPeek-$PACKAGE_VERSION-win-x64.zip" "DiskPeek-$PACKAGE_VERSION-source.zip" DiskPeek-portable-win-x64.zip SHA256SUMS.txt)
           if existing_draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null); then
             if [ "$existing_draft" != 'true' ]; then

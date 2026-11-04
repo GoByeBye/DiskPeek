@@ -254,8 +254,8 @@ internal static class Cli
     private static ScanEngineKind ParseEngine(string text) => Enum.TryParse<ScanEngineKind>(text, true, out var engine) && Enum.IsDefined(engine) ? engine : throw new ArgumentException("Engine must be auto, directory, mft, or baseline.");
     private static SizeMetric ParseMetric(string text) => Enum.TryParse<SizeMetric>(text, true, out var metric) && Enum.IsDefined(metric) ? metric : throw new ArgumentException("Metric must be allocated or logical.");
     private static double Median(IEnumerable<double> source) { var values = source.Order().ToArray(); return values.Length % 2 == 0 ? (values[values.Length / 2 - 1] + values[values.Length / 2]) / 2 : values[values.Length / 2]; }
-    private static void Help() => Console.WriteLine("""
-DiskPeek CLI 0.1 — AGPL-3.0-or-later
+    private static void Help() => Console.WriteLine($"""
+DiskPeek CLI {typeof(Cli).Assembly.GetName().Version!.ToString(3)} — AGPL-3.0-or-later
   scan <path> [--engine auto|directory|mft|baseline] [--metric allocated|logical]
               [--csv file.csv] [--workers 0..16]
   benchmark <path> [--runs 3] [--engine directory|mft|auto]
