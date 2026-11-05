@@ -26,7 +26,7 @@ public sealed class TreemapControl : FrameworkElement
     private CancellationTokenSource? layoutCancellation;
     private CancellationTokenSource? deletionOverlayCancellation;
     private ScanDeletionState? deletions;
-    private bool[] remainderChanged = [];
+    private double[] deletionFractions = [];
     private readonly DispatcherTimer resizeTimer;
     private static readonly Brush TextBrush = FrozenBrush(Color.FromRgb(247, 251, 255));
     private static readonly Pen TilePen = FrozenPen(Color.FromArgb(110, 10, 20, 32), .7);
@@ -35,8 +35,6 @@ public sealed class TreemapControl : FrameworkElement
     private static readonly Pen GroupShadowPen = FrozenPen(Color.FromArgb(220, 12, 28, 36), 4);
     private static readonly Pen GroupPen = FrozenPen(Color.FromRgb(148, 255, 226), 2);
     private static readonly Brush DeletedFill = FrozenBrush(Color.FromRgb(188, 45, 62));
-    private static readonly Brush DeletedStripe = FrozenBrush(Color.FromRgb(255, 112, 124));
-    private static readonly Pen DeletedPen = FrozenPen(Color.FromRgb(255, 112, 124), 2);
     public bool SelectedIsRemainder { get; private set; }
     public event Action<int>? NodeSelected;
     public event Action<int>? NodeActivated;
@@ -67,7 +65,7 @@ public sealed class TreemapControl : FrameworkElement
         selected = -1;
         SelectedIsRemainder = false;
         deletionOverlayCancellation?.Cancel();
-        remainderChanged = [];
+        deletionFractions = [];
         layout = null;
         InvalidateVisual();
         Rebuild();
@@ -83,34 +81,14 @@ public sealed class TreemapControl : FrameworkElement
         var snapshot = layout;
         var snapshotResult = result;
         var state = deletions;
-        if (snapshot == null || snapshotResult == null || state == null) { InvalidateVisual(); return; }
+        if (snapshot == null || snapshotResult == null || state == null) { deletionFractions = []; InvalidateVisual(); return; }
         var cancellation = deletionOverlayCancellation = new CancellationTokenSource();
         SizeMetric snapshotMetric = metric;
         try
         {
-            // Remainders own only the omitted positive-size child subtrees. A deletion
-            // of a drawn or zero-size sibling must not paint an unrelated aggregate red.
-            // Keep only the bounded top-child exclusion sets; never allocate one flag/VM
-            // per scanned node just for drawing. Membership checks run off the UI thread.
-            var changed = await Task.Run(() =>
-            {
-                var flags = new bool[snapshot.Tiles.Length];
-                for (int i = 0; i < snapshot.Tiles.Length; i++)
-                {
-                    var tile = snapshot.Tiles[i];
-                    if (!tile.Remainder || state.GetDeletedCount(tile.Index) == 0 || state.IsDeleted(tile.Index)) continue;
-                    if (!snapshot.RemainderExcludedRoots.TryGetValue(tile.Index, out var excluded)) continue;
-                    int checkedChildren = 0;
-                    foreach (int child in snapshotResult.Children(tile.Index))
-                    {
-                        if ((checkedChildren++ & 4095) == 0) cancellation.Token.ThrowIfCancellationRequested();
-                        if (snapshotResult.Value(child, snapshotMetric) > 0 && !excluded.Contains(child) && state.GetDeletedCount(child) > 0) { flags[i] = true; break; }
-                    }
-                }
-                return flags;
-            }, cancellation.Token);
+            var fractions = await Task.Run(() => BuildDeletionOverlay(snapshotResult, snapshot, snapshotMetric, state, cancellation.Token), cancellation.Token);
             if (cancellation.IsCancellationRequested || layout != snapshot || deletions != state) return;
-            remainderChanged = changed;
+            deletionFractions = fractions;
             int hoveredPosition = Array.FindIndex(snapshot.Tiles, tile => tile.Index == hover);
             if (hoveredPosition >= 0) SetTileTooltip(snapshot.Tiles[hoveredPosition]);
             InvalidateVisual();
@@ -134,7 +112,7 @@ public sealed class TreemapControl : FrameworkElement
             var next = await Task.Run(() => BuildLayout(snapshot, snapshotRoot, snapshotMetric, size, cancellation.Token), cancellation.Token);
             if (cancellation.IsCancellationRequested || result != snapshot) return;
             layout = next;
-            remainderChanged = [];
+            deletionFractions = [];
             ClearHoverGroup();
             UpdateHoverGroup(hover);
             RefreshDeletions();
@@ -161,14 +139,12 @@ public sealed class TreemapControl : FrameworkElement
         {
             var tile = layout.Tiles[tilePosition];
             bool deleted = deletions?.IsDeleted(tile.Index) == true;
-            bool partlyDeleted = !deleted && (tile.Remainder ? tilePosition < remainderChanged.Length && remainderChanged[tilePosition] : tile.Grouped && deletions?.HasDeletedDescendants(tile.Index) == true);
             dc.DrawRectangle(deleted ? DeletedFill : TreemapPalette.BrushAt(tile.Color), TilePen, tile.Bounds);
-            if (partlyDeleted)
+            if (!deleted && tilePosition < deletionFractions.Length && deletionFractions[tilePosition] > 0)
             {
-                var outline = tile.Bounds;
-                outline.Inflate(-1, -1);
-                if (!outline.IsEmpty && outline.Width > 0 && outline.Height > 0) dc.DrawRectangle(null, DeletedPen, outline);
-                dc.DrawRectangle(DeletedStripe, null, new Rect(tile.Bounds.X, Math.Max(tile.Bounds.Y, tile.Bounds.Bottom - 4), tile.Bounds.Width, Math.Min(4, tile.Bounds.Height)));
+                // A collapsed tile has no individual leaf geometry. Reserve only the
+                // deleted share of its scan-time bytes, never its entire border/area.
+                dc.DrawRectangle(DeletedFill, null, GetDeletionBounds(tile.Bounds, deletionFractions[tilePosition]));
             }
             if (result != null && tile.Bounds.Width > 84 && tile.Bounds.Height > 24)
             {
@@ -189,16 +165,6 @@ public sealed class TreemapControl : FrameworkElement
             {
                 dc.DrawRectangle(null, GroupShadowPen, groupBounds);
                 dc.DrawRectangle(null, GroupPen, groupBounds);
-            }
-        }
-        if (deletions != null)
-        {
-            foreach (var group in layout.FolderGroups)
-            {
-                if (deletions.IsDeleted(group.Key) || !deletions.HasDeletedDescendants(group.Key)) continue;
-                var bounds = group.Value.Bounds;
-                bounds.Inflate(-3, -3);
-                if (!bounds.IsEmpty && bounds.Width > 0 && bounds.Height > 0) dc.DrawRectangle(null, DeletedPen, bounds);
             }
         }
         foreach (var tile in layout.Tiles)
@@ -238,9 +204,9 @@ public sealed class TreemapControl : FrameworkElement
         else if (tile.Remainder)
         {
             int position = layout == null ? -1 : Array.FindIndex(layout.Tiles, candidate => candidate.Index == tile.Index && candidate.Remainder);
-            if (position >= 0 && position < remainderChanged.Length && remainderChanged[position]) message += "\nSome entries in this aggregate were deleted or moved since scan.";
+            if (position >= 0 && position < deletionFractions.Length && deletionFractions[position] > 0) message += $"\n{deletionFractions[position]:P1} of this aggregate's measured bytes were deleted or moved since scan; the red portion is proportional.";
         }
-        else if (tile.Grouped && deletions?.HasDeletedDescendants(tile.Index) == true) message += "\nSome folder contents were deleted or moved since scan.";
+        else if (tile.Grouped && deletions?.HasDeletedDescendants(tile.Index) == true) message += "\nSome folder contents were deleted or moved since scan; only their share of measured bytes is red. Zoom in to inspect individual entries.";
         else if (!tile.Remainder && deletions?.HasDeletedDescendants(tile.FolderIndex) == true) message += "\nThis folder group contains entries deleted or moved since scan.";
         message += tile.Remainder ? "\nAdditional items in this folder; select an actual table item before recycling." : "\nDouble-click to zoom into this folder group.";
         ToolTip = message;
@@ -313,6 +279,71 @@ public sealed class TreemapControl : FrameworkElement
         point = new Point(point.X * layout.Size.Width / ActualWidth, point.Y * layout.Size.Height / ActualHeight);
         for (int i = layout.Tiles.Length - 1; i >= 0; i--) if (layout.Tiles[i].Bounds.Contains(point)) return layout.Tiles[i];
         return null;
+    }
+
+    internal static double[] BuildDeletionOverlay(ScanResult result, MapLayout layout, SizeMetric metric, ScanDeletionState state, CancellationToken ct)
+    {
+        // Only bounded visible tiles get overlay storage. Walk affected collapsed
+        // subtrees off the UI thread, pruning unchanged or wholly removed branches.
+        var fractions = new double[layout.Tiles.Length];
+        int visited = 0;
+        for (int i = 0; i < layout.Tiles.Length; i++)
+        {
+            CheckCancellation();
+            var tile = layout.Tiles[i];
+            if (state.IsDeleted(tile.Index)) { fractions[i] = 1; continue; }
+            if (!tile.Grouped || state.GetDeletedCount(tile.Index) == 0) continue;
+            double total = 0, removed = 0;
+            if (tile.Remainder)
+            {
+                // The owner also contains explicitly drawn children. Neither those
+                // children nor zero/unknown-byte entries belong to this aggregate.
+                if (!layout.RemainderExcludedRoots.TryGetValue(tile.Index, out var excluded)) continue;
+                foreach (int child in result.Children(tile.Index))
+                {
+                    CheckCancellation();
+                    long value = result.Value(child, metric);
+                    if (value <= 0 || excluded.Contains(child)) continue;
+                    total += value;
+                    removed += DeletedBytes(child);
+                }
+            }
+            else
+            {
+                total = result.Value(tile.Index, metric);
+                if (total > 0) removed = DeletedBytes(tile.Index);
+            }
+            if (total > 0) fractions[i] = Math.Clamp(removed / total, 0, 1);
+        }
+        return fractions;
+
+        double DeletedBytes(int subtree)
+        {
+            double bytes = 0;
+            int current = subtree;
+            while (true)
+            {
+                CheckCancellation();
+                if (state.IsDeleted(current)) bytes += result.Value(current, metric);
+                else if (state.HasDeletedDescendants(current) && result.FirstChild[current] >= 0)
+                { current = result.FirstChild[current]; continue; }
+                // Iterative traversal uses existing sibling/parent indices, avoiding
+                // a per-entry stack even for very wide or deep collapsed folders.
+                while (current != subtree && result.NextSibling[current] < 0)
+                { CheckCancellation(); current = result.Nodes[current].ParentIndex; }
+                if (current == subtree) return bytes;
+                current = result.NextSibling[current];
+            }
+        }
+        void CheckCancellation() { if ((visited++ & 4095) == 0) ct.ThrowIfCancellationRequested(); }
+    }
+
+    internal static Rect GetDeletionBounds(Rect bounds, double fraction)
+    {
+        fraction = Math.Clamp(fraction, 0, 1);
+        return bounds.Width >= bounds.Height
+            ? new Rect(bounds.X, bounds.Y, bounds.Width * fraction, bounds.Height)
+            : new Rect(bounds.X, bounds.Bottom - bounds.Height * fraction, bounds.Width, bounds.Height * fraction);
     }
 
     internal static MapLayout BuildLayout(ScanResult result, int root, SizeMetric metric, Size size, CancellationToken ct)

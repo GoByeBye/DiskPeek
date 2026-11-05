@@ -1,10 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>DiskPeek.Tests</AssemblyName></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>DiskPeek.Tests</AssemblyName><UseWPF>true</UseWPF></PropertyGroup>
   <ItemGroup>
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
     <ProjectReference Include="../../src/DiskPeek.Core/DiskPeek.Core.csproj" />
     <PackageReference Include="Velopack" Version="1.2.161" />
     <!-- Exercise the production update policy without starting WPF or touching user preferences. -->
     <Compile Include="../../src/DiskPeek.App/UpdateService.cs" Link="App/UpdateService.cs" />
     <Compile Include="../../src/DiskPeek.App/UserSettings.cs" Link="App/UserSettings.cs" />
+    <!-- Exercise the actual drawing surface without starting the application or its services. -->
+    <Compile Include="../../src/DiskPeek.App/TreemapControl.cs" Link="App/TreemapControl.cs" />
+    <Compile Include="../../src/DiskPeek.App/ResultView.cs" Link="App/ResultView.cs" />
   </ItemGroup>
 </Project>

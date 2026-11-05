@@ -22,7 +22,10 @@ internal static partial class Verification
         Directory.CreateDirectory(workspace);
         FixtureRoot = Path.Combine(workspace, "verification-fixture-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(FixtureRoot);
-        ReportPath = args.Length == 2 && args[0] == "--report" ? Path.GetFullPath(args[1]) : Path.Combine(workspace, "verification-results.json");
+        int reportArgument = Array.IndexOf(args, "--report");
+        ReportPath = reportArgument >= 0 && reportArgument + 1 < args.Length ? Path.GetFullPath(args[reportArgument + 1]) : Path.Combine(workspace, "verification-results.json");
+        if (!args.Contains("--treemap-only"))
+        {
         await Run("Aggregation: nested and out-of-order parent records", TestAggregation);
         await Run("Hard links: deterministic scoped allocation", TestHardLinks);
         await Run("Unknown allocation and skipped subtrees stay incomplete", TestUnknown);
@@ -57,6 +60,8 @@ internal static partial class Verification
         await Run("Filesystem: cancellation keeps partial results", TestCancellation);
         await Run("Filesystem: changing directory does not crash", TestChanging);
         await RunDeletionTests();
+        }
+        await RunTreemapDeletionTests();
         var report = new
         {
             GeneratedUtc = DateTime.UtcNow, FixtureRoot, Runtime = Environment.Version.ToString(), OS = Environment.OSVersion.ToString(),

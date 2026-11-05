@@ -12,10 +12,15 @@ scanned descendants. A renamed or moved item can have the same appearance as a
 deleted item because its original scanned path is gone. Highlighting is
 historical: a recreated or restored path stays marked until Rescan.
 
-Individual deleted items are filled red. Collapsed groups with affected children
-receive a red indicator; an aggregate is not an instruction to delete every item
-in its containing folder. The synthetic “More files” tile cannot be used as a
-recycling target. Select a concrete table item instead.
+Individual deleted items are filled red. Their containing folder group does not
+receive a red border. Collapsed groups and “More files” aggregates fill only the
+proportion of their measured scan-time bytes belonging to deleted items. There
+is no minimum red stripe size; a tiny deletion remains tiny, including in a very
+thin tile. Zoom into a collapsed folder to inspect individual entries. Unknown
+allocation and zero-byte items do not create red allocated area, and separately
+drawn siblings do not contribute to an aggregate's red portion. The synthetic
+“More files” tile cannot be used as a recycling target. Select a concrete table
+item instead.
 
 File and folder sizes, allocated-space attribution, file types, and CSV output
 remain the original observation. Moving data into the Recycle Bin does not free

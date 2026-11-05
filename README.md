@@ -75,8 +75,10 @@ mounted volumes, are shown without traversing their targets.
 ## Deleted items and Recycle Bin
 
 DiskPeek watches for deletions and moves while the scan runs and afterwards.
-Confirmed missing paths turn red in the treemap and file table. A grouped folder
-containing affected items gets a red indicator. Original tile areas, sizes,
+Confirmed missing paths turn red in the treemap and file table. Only deleted
+segments turn red; expanded folder groups keep their original colors. Collapsed
+groups show red in proportion to their deleted measured bytes. Original tile
+areas, sizes,
 file-type statistics, and CSV exports remain a snapshot of the scan; they are
 not an estimate of space reclaimed. Rescan refreshes everything and clears the
 highlights, including paths that were recreated or restored.

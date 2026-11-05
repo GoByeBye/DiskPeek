@@ -42,6 +42,9 @@ are retained for 30 days, subject to repository policy. A build failing before
 tests start has no test report; this is reported as a missing diagnostics file.
 
 Hosted CI does not run the interactive WPF benchmark or accept UAC prompts.
+It does render the actual treemap offscreen on STA threads to verify that tiny
+deletions leave neighboring pixels unchanged and collapsed groups show only the
+deleted byte proportion, including tiles four DIPs thick in either orientation.
 Live elevated scans, GUI interaction, and external storage/provider scenarios
 retain the verification limits described in `VALIDATION.md`.
 
